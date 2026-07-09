@@ -374,6 +374,7 @@ async def api_pdf_to_word_download_edited(request: DownloadEditedWordRequest):
 async def api_split(
     file: UploadFile = File(...),
     ranges: str = Form(...),  # e.g. "1-3,4,5-7" or "1,2,3"
+    page_rotations: str = Form(default="{}"),  # JSON object: {"1": 90, "3": 180}
 ):
     """
     Split a PDF by page ranges. ranges = comma-separated items like "1-3,4,5-7".
@@ -384,6 +385,7 @@ async def api_split(
         content = await file.read()
         doc = fitz.open(stream=content, filetype="pdf")
         total = doc.page_count
+        rotations = json.loads(page_rotations or "{}")
 
         # Parse ranges
         segments = []
@@ -409,6 +411,11 @@ async def api_split(
             for i, (s, e) in enumerate(segments, 1):
                 new_doc = fitz.open()
                 new_doc.insert_pdf(doc, from_page=s, to_page=e)
+                for offset, source_page_index in enumerate(range(s, e + 1)):
+                    extra_rotation = int(rotations.get(str(source_page_index + 1), 0)) % 360
+                    if extra_rotation:
+                        page = new_doc[offset]
+                        page.set_rotation((page.rotation + extra_rotation) % 360)
                 pdf_bytes = new_doc.tobytes()
                 new_doc.close()
                 label = f"trang_{s+1}" if s == e else f"trang_{s+1}-{e+1}"
