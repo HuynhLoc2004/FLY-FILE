@@ -1,7 +1,6 @@
 import { useState, useRef } from 'react';
 import { Upload, RefreshCw, Loader2, ArrowLeftRight } from 'lucide-react';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+import { API_URL } from '../config/api';
 
 // Used for both Image→PDF and Image format conversion (JPG↔PNG etc.)
 const ImageConvertWorkspace = ({ mode = 'convert', onCancel }) => {

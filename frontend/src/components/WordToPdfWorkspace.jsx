@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Upload, Download, RefreshCw, Loader2, FileOutput, AlertCircle, Eye, FileWarning } from 'lucide-react';
+import { API_URL } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
   const [file, setFile] = useState(initialFiles?.[0] || null);

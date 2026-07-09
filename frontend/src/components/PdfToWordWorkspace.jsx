@@ -3,8 +3,8 @@ import {
   FileText, Download, RefreshCw, Loader2,
   AlertCircle, UploadCloud, CheckCircle2,
 } from 'lucide-react';
+import { API_URL } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const PdfToWordWorkspace = () => {
   const [file, setFile]               = useState(null);

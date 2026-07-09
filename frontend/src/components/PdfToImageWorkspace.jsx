@@ -1,7 +1,7 @@
-﻿import { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { Upload, Download, Image as ImageIcon, RefreshCw, Loader2 } from 'lucide-react';
+import { API_URL } from '../config/api';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 const PdfToImageWorkspace = ({ initialFiles, onCancel }) => {
   const [file, setFile] = useState(initialFiles?.[0] || null);

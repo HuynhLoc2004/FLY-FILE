@@ -5,13 +5,13 @@ import {
   Languages, FileText, AlertCircle, RefreshCw,
   ZoomIn, ZoomOut, Tag
 } from 'lucide-react';
+import { API_URL } from '../config/api';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
 ).toString();
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // ── Dropzone ──────────────────────────────────────────────────────────────────
 const Dropzone = ({ onFiles }) => {
