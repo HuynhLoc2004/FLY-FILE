@@ -7,11 +7,13 @@ PDF → Word (DOCX) Converter.
 """
 
 import io
+import logging
 import fitz  # PyMuPDF
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+logger = logging.getLogger(__name__)
 GLOBAL_OCR_ENGINE = None
 TESSERACT_AVAILABLE = None  # None = unchecked, True/False after first check
 
@@ -498,4 +500,44 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
 # ── convenience ───────────────────────────────────────────────────────────────
 
 def convert_pdf_bytes_to_docx_bytes(pdf_bytes: bytes) -> bytes:
-    return build_docx_from_blocks(parse_pdf_to_blocks(pdf_bytes))
+    try:
+        return build_docx_from_blocks(parse_pdf_to_blocks(pdf_bytes))
+    except Exception:
+        logger.exception("Layout-preserving PDF to Word conversion failed; using plain-text fallback")
+        return build_plain_text_docx(pdf_bytes)
+
+
+def build_plain_text_docx(pdf_bytes: bytes) -> bytes:
+    """Fallback converter for PDFs whose layout/table parsing fails."""
+    pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    doc = Document()
+
+    for section in doc.sections:
+        section.top_margin = Inches(1.0)
+        section.bottom_margin = Inches(1.0)
+        section.left_margin = Inches(1.18)
+        section.right_margin = Inches(1.18)
+
+    normal = doc.styles["Normal"]
+    normal.font.name = "Times New Roman"
+    normal.font.size = Pt(12)
+
+    for page_index, page in enumerate(pdf_doc):
+        if page_index:
+            doc.add_page_break()
+
+        text = page.get_text("text").strip()
+        if not text:
+            text = "[This page has no extractable text. It may be a scanned image.]"
+
+        for line in text.splitlines():
+            p = doc.add_paragraph(line)
+            for run in p.runs:
+                run.font.name = "Times New Roman"
+                run.font.size = Pt(12)
+
+    pdf_doc.close()
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out.read()
