@@ -24,16 +24,30 @@ const contentTypes = {
 
 const sendFile = (response, filePath) => {
   const stream = createReadStream(filePath);
+  const extension = extname(filePath);
+  const isHtml = extension === '.html';
   response.writeHead(200, {
-    'Content-Type': contentTypes[extname(filePath)] || 'application/octet-stream',
+    'Content-Type': contentTypes[extension] || 'application/octet-stream',
+    'Cache-Control': isHtml
+      ? 'no-store, max-age=0'
+      : 'public, max-age=31536000, immutable',
   });
   stream.pipe(response);
+};
+
+const sendNotFound = (response) => {
+  response.writeHead(404, {
+    'Content-Type': 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store, max-age=0',
+  });
+  response.end('Not found');
 };
 
 createServer((request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const safePath = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, '');
   let filePath = join(root, safePath);
+  const isAssetRequest = safePath.startsWith('/assets/') || safePath.includes('.');
 
   if (existsSync(filePath) && statSync(filePath).isDirectory()) {
     filePath = join(filePath, 'index.html');
@@ -41,6 +55,11 @@ createServer((request, response) => {
 
   if (existsSync(filePath) && statSync(filePath).isFile()) {
     sendFile(response, filePath);
+    return;
+  }
+
+  if (isAssetRequest) {
+    sendNotFound(response);
     return;
   }
 
