@@ -190,14 +190,6 @@ const Home = () => {
         <div className="file-hero-grain" />
         <div className="file-hero-brand">Fly FILE</div>
         <div className="file-hero-ghost">FILE DESK</div>
-        <div className="file-hero-runner" aria-hidden="true">
-          <span>PDF WORD FILE</span>
-          <span>Sắp xếp hồ sơ</span>
-          <span>PDF WORD FILE</span>
-          <span>Gom ảnh nhanh</span>
-          <span>PDF WORD FILE</span>
-          <span>Dịch tài liệu</span>
-        </div>
         <div className="file-hero-orbit file-hero-orbit-one" />
         <div className="file-hero-orbit file-hero-orbit-two" />
         <div
