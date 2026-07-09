@@ -1,0 +1,27 @@
+meta {
+  name: Chuyển đổi định dạng ảnh
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{base_url}}/api/convert-image
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(/path/to/image.jpg)
+  to_format: png
+}
+
+# to_format: png | jpg | webp
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("trả về ảnh", function() {
+    expect(res.headers["content-type"]).to.include("image/");
+  });
+}

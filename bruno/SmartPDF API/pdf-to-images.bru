@@ -1,0 +1,32 @@
+meta {
+  name: PDF sang Hình ảnh
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/api/pdf-to-images
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(/path/to/test.pdf)
+  dpi: 150
+  fmt: png
+}
+
+# fmt: png | jpg
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("có danh sách images", function() {
+    expect(res.body.images).to.be.an("array");
+    expect(res.body.images.length).to.be.greaterThan(0);
+  });
+  test("mỗi image có data base64", function() {
+    expect(res.body.images[0].data).to.be.a("string");
+  });
+}

@@ -1,0 +1,24 @@
+meta {
+  name: PDF sang Word
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/pdf-to-word
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(/path/to/test.pdf)
+}
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("trả về file docx", function() {
+    expect(res.headers["content-type"]).to.include("wordprocessingml");
+  });
+}

@@ -1,0 +1,25 @@
+meta {
+  name: Hình ảnh sang PDF
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{base_url}}/api/images-to-pdf
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  files: @file(/path/to/image1.jpg)
+  files: @file(/path/to/image2.png)
+}
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("trả về PDF", function() {
+    expect(res.headers["content-type"]).to.include("application/pdf");
+  });
+}

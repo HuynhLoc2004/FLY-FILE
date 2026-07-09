@@ -1,0 +1,28 @@
+meta {
+  name: Dịch PDF (HTML pipeline)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/api/translate-pdf/html
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(/path/to/test.pdf)
+}
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("có pages", function() {
+    expect(res.body.pages).to.be.an("array");
+    expect(res.body.pages.length).to.be.greaterThan(0);
+  });
+  test("có translated_html", function() {
+    expect(res.body.pages[0].translated_html).to.be.a("string");
+  });
+}

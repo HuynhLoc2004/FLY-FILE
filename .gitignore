@@ -1,0 +1,43 @@
+# Environment & secrets — KHÔNG BAO GIỜ commit
+.env
+.env.*
+*.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+.uv-cache/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Blackbox
+.blackboxcli/
+.blackbox/tmp/
+
+# Personal test files
+frontend/public/221A011246_HuynhHoangvu.docx

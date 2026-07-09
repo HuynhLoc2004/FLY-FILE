@@ -1,0 +1,25 @@
+meta {
+  name: Gộp PDF
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/merge
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  files: @file(/path/to/file1.pdf)
+  files: @file(/path/to/file2.pdf)
+}
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("trả về PDF", function() {
+    expect(res.headers["content-type"]).to.include("application/pdf");
+  });
+}

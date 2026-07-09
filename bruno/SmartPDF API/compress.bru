@@ -1,0 +1,27 @@
+meta {
+  name: Nén PDF
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/api/compress
+  body: multipart-form
+  auth: none
+}
+
+body:multipart-form {
+  file: @file(/path/to/test.pdf)
+  level: medium
+}
+
+# level có thể là: medium | extreme | ultra
+
+tests {
+  test("status 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("trả về PDF", function() {
+    expect(res.headers["content-type"]).to.include("application/pdf");
+  });
+}

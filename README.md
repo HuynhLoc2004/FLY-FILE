@@ -1,62 +1,55 @@
-# SmartPDF
+# Fly FILE
 
-Công cụ xử lý và dịch PDF tiếng Việt sang tiếng Anh.
+Fly FILE là workspace xử lý PDF được chuyển từ Smart-PDF, giữ nguyên backend FastAPI và làm mới frontend theo phong cách Fly_PTE.
 
-## Khởi chạy local
+## Chạy local
 
-Mở **2 terminal riêng**, chạy cùng lúc:
+Mở 2 terminal riêng:
 
-### Terminal 1 — Backend
+### Backend
 
 ```bash
 cd backend
-py -3 -m uvicorn main:app --reload --port 8000
+.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 ```
 
-> API docs: http://localhost:8000/docs
+API docs: http://localhost:8000/docs
 
-### Terminal 2 — Frontend
+### Frontend
 
 ```bash
 cd frontend
-npm install        # chỉ cần chạy lần đầu
+npm install
 npm run dev
 ```
 
-> App: http://localhost:5173
-
----
+App: http://localhost:5173
 
 ## Biến môi trường
 
-Tạo file `backend/.env` (tùy chọn):
+Tạo `backend/.env` nếu cần:
 
-```
+```env
 GEMINI_API_KEY=your_key_here
-DEEPL_API_KEY=your_key_here   # không bắt buộc
+DEEPL_API_KEY=your_key_here
 ```
 
-Nếu không có `.env`, backend dùng key mặc định trong `html_translator.py`.
+Frontend dùng `VITE_API_URL` để trỏ tới backend khi deploy:
 
----
+```env
+VITE_API_URL=https://your-backend-url
+```
 
-## Deploy (Railway)
+## Chức năng
 
-- **Backend**: tự động deploy từ thư mục `backend/`
-- **Frontend**: cần set biến môi trường `VITE_API_URL=https://<backend-url>.railway.app`
-
----
-
-## Các tính năng
-
-| Công cụ | Mô tả |
+| Công cụ | API |
 |---|---|
-| Gộp PDF | Ghép nhiều file PDF thành một |
-| Nén PDF | Giảm dung lượng file PDF |
-| Cắt PDF | Tách PDF theo khoảng trang |
-| PDF → Word | Chuyển PDF sang DOCX |
-| Word → PDF | Chuyển DOCX sang PDF |
-| PDF → Hình ảnh | Xuất từng trang PDF thành ảnh PNG/JPG |
-| Hình ảnh → PDF | Ghép nhiều ảnh thành PDF |
-| Chuyển đổi ảnh | Chuyển định dạng JPG ↔ PNG ↔ WEBP |
-| Dịch PDF | Dịch PDF tiếng Việt → tiếng Anh (Gemini Vision) |
+| Gộp PDF | `/api/merge`, `/api/merge-pages` |
+| Nén PDF | `/api/compress` |
+| Cắt PDF | `/api/split` |
+| PDF sang Word | `/api/pdf-to-word` |
+| Word sang PDF | `/api/word-to-pdf` |
+| PDF sang hình ảnh | `/api/pdf-to-images` |
+| Hình ảnh sang PDF | `/api/images-to-pdf` |
+| Chuyển đổi ảnh | `/api/convert-image` |
+| Dịch PDF | `/api/translate-pdf/html` |
