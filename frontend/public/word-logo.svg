@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 420" role="img" aria-labelledby="title">
+  <title id="title">Word icon</title>
+  <defs>
+    <linearGradient id="cover" x1="88" x2="316" y1="69" y2="343" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0d67b2"/>
+      <stop offset="1" stop-color="#064a8c"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#071522" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <rect x="194" y="78" width="273" height="265" rx="14" fill="#f7fbff" stroke="#0b62a6" stroke-width="14"/>
+    <path d="M245 128h174M245 174h174M245 220h174M245 266h174" stroke="#0b62a6" stroke-width="14" stroke-linecap="square"/>
+    <path d="M92 88 292 50v320L92 332V88Z" fill="url(#cover)"/>
+    <path d="M127 152h48l31 110 34-122h45l-58 168h-44l-32-107-31 107H76l-45-143h44l26 97 26-110Z" transform="translate(58 5)" fill="#fff"/>
+  </g>
+</svg>

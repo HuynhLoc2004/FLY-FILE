@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 520" role="img" aria-labelledby="title">
+  <title id="title">File folder icon</title>
+  <defs>
+    <linearGradient id="red" x1="84" x2="184" y1="115" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ff6960"/>
+      <stop offset="1" stop-color="#d52323"/>
+    </linearGradient>
+    <linearGradient id="green" x1="174" x2="300" y1="125" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5ccb3e"/>
+      <stop offset="1" stop-color="#189021"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="275" x2="410" y1="141" y2="435" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffd04a"/>
+      <stop offset="1" stop-color="#f59b18"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="380" x2="558" y1="163" y2="452" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#43c7f3"/>
+      <stop offset="1" stop-color="#168dcc"/>
+    </linearGradient>
+    <filter id="shadow" x="-15%" y="-20%" width="135%" height="150%">
+      <feDropShadow dx="0" dy="20" stdDeviation="20" flood-color="#071522" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)" stroke-linejoin="round">
+    <path d="M80 156c0-25 20-45 45-45h76l30 31h92c24 0 44 20 44 44v202c0 25-20 45-45 45H125c-25 0-45-20-45-45V156Z" fill="url(#red)" stroke="#bd1f1f" stroke-width="8"/>
+    <path d="M129 165h185c18 0 32 14 32 32v194H129V165Z" fill="#f5f7fb" stroke="#cfd6df" stroke-width="6"/>
+    <path d="M169 162c0-25 20-45 45-45h76l31 32h92c24 0 44 20 44 44v201c0 25-20 45-45 45H214c-25 0-45-20-45-45V162Z" fill="url(#green)" stroke="#15851f" stroke-width="8"/>
+    <path d="M218 172h194c18 0 32 14 32 32v194H218V172Z" fill="#f5f7fb" stroke="#cfd6df" stroke-width="6"/>
+    <path d="M262 181c0-25 20-45 45-45h76l31 31h91c25 0 45 20 45 45v200c0 25-20 45-45 45H307c-25 0-45-20-45-45V181Z" fill="url(#gold)" stroke="#de8d12" stroke-width="8"/>
+    <path d="M311 190h191c18 0 32 14 32 32v195H311V190Z" fill="#f5f7fb" stroke="#cfd6df" stroke-width="6"/>
+    <path d="M358 203c0-25 20-45 45-45h76l31 32h74c25 0 45 20 45 45v207c0 25-20 45-45 45H403c-25 0-45-20-45-45V203Z" fill="url(#blue)" stroke="#117fb6" stroke-width="8"/>
+    <path d="M403 218h158M403 248h158M403 278h158M403 308h158M403 338h138M403 368h126" stroke="#e9eef5" stroke-width="10" stroke-linecap="round"/>
+  </g>
+</svg>

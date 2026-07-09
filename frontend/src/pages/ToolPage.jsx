@@ -1,15 +1,21 @@
-import { useState, useEffect } from 'react';
+import { lazy, Suspense, useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { UploadCloud, ChevronDown } from 'lucide-react';
 
-import MergeWorkspace from '../components/MergeWorkspace';
-import PdfToWordWorkspace from '../components/PdfToWordWorkspace';
-import PdfToImageWorkspace from '../components/PdfToImageWorkspace';
-import WordToPdfWorkspace from '../components/WordToPdfWorkspace';
-import ImageConvertWorkspace from '../components/ImageConvertWorkspace';
-import SplitWorkspace from '../components/SplitWorkspace';
-import TranslateWorkspace from '../components/TranslateWorkspace';
-import CompressWorkspace from '../components/CompressWorkspace';
+const MergeWorkspace = lazy(() => import('../components/MergeWorkspace'));
+const PdfToWordWorkspace = lazy(() => import('../components/PdfToWordWorkspace'));
+const PdfToImageWorkspace = lazy(() => import('../components/PdfToImageWorkspace'));
+const WordToPdfWorkspace = lazy(() => import('../components/WordToPdfWorkspace'));
+const ImageConvertWorkspace = lazy(() => import('../components/ImageConvertWorkspace'));
+const SplitWorkspace = lazy(() => import('../components/SplitWorkspace'));
+const TranslateWorkspace = lazy(() => import('../components/TranslateWorkspace'));
+const CompressWorkspace = lazy(() => import('../components/CompressWorkspace'));
+
+const ToolLoading = () => (
+  <div className="loading-mini-card tool-loading-card">
+    Đang mở công cụ...
+  </div>
+);
 
 const ToolPage = () => {
   const { toolId } = useParams();
@@ -73,61 +79,63 @@ const config = toolConfig[toolId] || { title: 'Công cụ', formats: ['PDF'] };
 
   return (
     <div className={files.length > 0 && toolId === 'merge' ? 'merge-workspace-wrapper' : 'tool-workspace'}>
-      {/* Tools that manage their own full-page UI */}
-      {toolId === 'translate' ? (
-        <TranslateWorkspace />
-      ) : toolId === 'pdf-to-word' ? (
-        <PdfToWordWorkspace />
-      ) : files.length === 0 ? (
-        <div
-          className={`dropzone ${isDragActive ? 'active' : ''}`}
-          onClick={() => document.getElementById('file-upload').click()}
-        >
-          <UploadCloud className="dropzone-icon" size={60} />
-          <button className="dropzone-btn">
-            Chọn file <ChevronDown size={18} style={{marginLeft: '5px'}}/>
-          </button>
-          <input
-            type="file"
-            id="file-upload"
-            multiple
-            style={{ display: 'none' }}
-            onChange={onFileChange}
-          />
-          <div className="dropzone-hint">Thêm các file PDF, hình ảnh, Word, Excel, và PowerPoint</div>
-          <div className="dropzone-formats">
-            Các định dạng được hỗ trợ:
-            {config.formats.map(f => (
-              <span key={f} className="format-badge ml-1" style={{ backgroundColor: '#fee2e2', color: '#ef4444' }}>{f}</span>
-            ))}
+      <Suspense fallback={<ToolLoading />}>
+        {/* Tools that manage their own full-page UI */}
+        {toolId === 'translate' ? (
+          <TranslateWorkspace />
+        ) : toolId === 'pdf-to-word' ? (
+          <PdfToWordWorkspace />
+        ) : files.length === 0 ? (
+          <div
+            className={`dropzone ${isDragActive ? 'active' : ''}`}
+            onClick={() => document.getElementById('file-upload').click()}
+          >
+            <UploadCloud className="dropzone-icon" size={60} />
+            <button className="dropzone-btn">
+              Chọn file <ChevronDown size={18} style={{marginLeft: '5px'}}/>
+            </button>
+            <input
+              type="file"
+              id="file-upload"
+              multiple
+              style={{ display: 'none' }}
+              onChange={onFileChange}
+            />
+            <div className="dropzone-hint">Thêm các file PDF, hình ảnh, Word, Excel, và PowerPoint</div>
+            <div className="dropzone-formats">
+              Các định dạng được hỗ trợ:
+              {config.formats.map(f => (
+                <span key={f} className="format-badge ml-1" style={{ backgroundColor: '#fee2e2', color: '#ef4444' }}>{f}</span>
+              ))}
+            </div>
           </div>
-        </div>
-      ) : toolId === 'merge' ? (
-        <MergeWorkspace initialFiles={files} onCancel={() => setFiles([])} />
-      ) : toolId === 'split' ? (
-        <SplitWorkspace initialFiles={files} onCancel={() => setFiles([])} />
-      ) : toolId === 'compress' ? (
-        <CompressWorkspace initialFiles={files} onCancel={() => setFiles([])} />
-      ) : toolId === 'word-to-pdf' ? (
-        <WordToPdfWorkspace initialFiles={files} onCancel={() => setFiles([])} />
-      ) : toolId === 'pdf-to-image' ? (
-        <PdfToImageWorkspace initialFiles={files} onCancel={() => setFiles([])} />
-      ) : toolId === 'image-to-pdf' ? (
-        <ImageConvertWorkspace mode="to-pdf" onCancel={() => setFiles([])} />
-      ) : toolId === 'convert-image' ? (
-        <ImageConvertWorkspace mode="convert" onCancel={() => setFiles([])} />
-      ) : (
-        <div style={{ textAlign: 'center', marginTop: '50px' }}>
-          <h3>Đã chọn {files.length} file</h3>
-          <ul style={{listStyle: 'none', padding: 0}}>
-            {files.map(f => <li key={f.name}>{f.name} ({(f.size / 1024 / 1024).toFixed(2)} MB)</li>)}
-          </ul>
-          <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'center' }}>
-            <button className="btn btn-primary">Xử lý ngay ({config.title})</button>
-            <button className="btn btn-outline" onClick={() => setFiles([])}>Hủy</button>
+        ) : toolId === 'merge' ? (
+          <MergeWorkspace initialFiles={files} onCancel={() => setFiles([])} />
+        ) : toolId === 'split' ? (
+          <SplitWorkspace initialFiles={files} onCancel={() => setFiles([])} />
+        ) : toolId === 'compress' ? (
+          <CompressWorkspace initialFiles={files} onCancel={() => setFiles([])} />
+        ) : toolId === 'word-to-pdf' ? (
+          <WordToPdfWorkspace initialFiles={files} onCancel={() => setFiles([])} />
+        ) : toolId === 'pdf-to-image' ? (
+          <PdfToImageWorkspace initialFiles={files} onCancel={() => setFiles([])} />
+        ) : toolId === 'image-to-pdf' ? (
+          <ImageConvertWorkspace mode="to-pdf" onCancel={() => setFiles([])} />
+        ) : toolId === 'convert-image' ? (
+          <ImageConvertWorkspace mode="convert" onCancel={() => setFiles([])} />
+        ) : (
+          <div style={{ textAlign: 'center', marginTop: '50px' }}>
+            <h3>Đã chọn {files.length} file</h3>
+            <ul style={{listStyle: 'none', padding: 0}}>
+              {files.map(f => <li key={f.name}>{f.name} ({(f.size / 1024 / 1024).toFixed(2)} MB)</li>)}
+            </ul>
+            <div style={{ marginTop: '20px', display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button className="btn btn-primary">Xử lý ngay ({config.title})</button>
+              <button className="btn btn-outline" onClick={() => setFiles([])}>Hủy</button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Suspense>
     </div>
   );
 };
