@@ -190,6 +190,14 @@ const Home = () => {
         <div className="file-hero-grain" />
         <div className="file-hero-brand">Fly FILE</div>
         <div className="file-hero-ghost">FILE DESK</div>
+        <div className="file-hero-runner" aria-hidden="true">
+          <span>PDF WORD FILE</span>
+          <span>Sắp xếp hồ sơ</span>
+          <span>PDF WORD FILE</span>
+          <span>Gom ảnh nhanh</span>
+          <span>PDF WORD FILE</span>
+          <span>Dịch tài liệu</span>
+        </div>
         <div className="file-hero-orbit file-hero-orbit-one" />
         <div className="file-hero-orbit file-hero-orbit-two" />
         <div
@@ -211,11 +219,13 @@ const Home = () => {
         </div>
 
         <div className="file-hero-copy">
-          <p className="file-hero-kicker">{heroImages[activeIndex].label}</p>
-          <h1>Xử lý tài liệu nhanh, nhìn vào là muốn làm.</h1>
-          <p className="file-hero-desc">
-            {heroImages[activeIndex].desc} Một bàn làm việc tiếng Việt cho PDF, Word, hình ảnh và hồ sơ dịch thuật.
-          </p>
+          <div className="file-hero-copy-track" key={heroImages[activeIndex].title}>
+            <p className="file-hero-kicker">{heroImages[activeIndex].label}</p>
+            <h1>Xử lý tài liệu nhanh, nhìn vào là muốn làm.</h1>
+            <p className="file-hero-desc">
+              {heroImages[activeIndex].desc} Một bàn làm việc tiếng Việt cho PDF, Word, hình ảnh và hồ sơ dịch thuật.
+            </p>
+          </div>
           <div className="file-hero-nav" aria-label="Điều khiển banner">
             <button type="button" onClick={() => navigateHero('prev')} aria-label="Ảnh trước">
               <ArrowLeft size={26} strokeWidth={2.25} />

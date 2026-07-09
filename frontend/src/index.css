@@ -2681,6 +2681,35 @@ body {
   color: rgba(255,255,255,0.16);
 }
 
+.file-hero-runner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: min(33vh, 310px);
+  z-index: 4;
+  display: flex;
+  width: max-content;
+  min-width: 200%;
+  gap: clamp(24px, 5vw, 72px);
+  align-items: center;
+  pointer-events: none;
+  user-select: none;
+  color: rgba(255,255,255,0.82);
+  font-family: 'Anton', Impact, sans-serif;
+  font-size: clamp(36px, 8vw, 122px);
+  font-weight: 900;
+  line-height: 0.9;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: 0 18px 42px rgba(2, 6, 23, 0.20);
+  mix-blend-mode: screen;
+  animation: fileHeroRunner 18s linear infinite;
+}
+
+.file-hero-runner span {
+  flex: 0 0 auto;
+}
+
 .file-hero-panel {
   opacity: 0.22;
 }
@@ -3301,6 +3330,38 @@ body,
   min-height: calc(100dvh - 102px);
 }
 
+.file-hero-copy {
+  overflow: visible;
+}
+
+.file-hero-copy-track {
+  animation: fileHeroCopyIn 560ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.file-hero-kicker,
+.file-hero-copy h1,
+.file-hero-desc {
+  text-shadow: 0 12px 32px rgba(2, 6, 23, 0.24);
+}
+
+@keyframes fileHeroRunner {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes fileHeroCopyIn {
+  from {
+    opacity: 0;
+    transform: translateX(-28px);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0);
+  }
+}
+
 @media (max-width: 1366px) {
   .top-header {
     grid-template-columns: auto minmax(0, 1fr) auto;
@@ -3477,6 +3538,13 @@ body,
     margin-bottom: 0;
   }
 
+  .file-hero-runner {
+    top: 28%;
+    font-size: clamp(38px, 15vw, 72px);
+    opacity: 0.66;
+    animation-duration: 14s;
+  }
+
   .file-hero-nav {
     margin-top: 12px;
   }
@@ -3585,6 +3653,10 @@ body,
   .file-hero-scroll-cue {
     animation: none;
     backdrop-filter: none;
+  }
+
+  .file-hero-copy-track {
+    animation-duration: 420ms;
   }
 
   .top-header,
