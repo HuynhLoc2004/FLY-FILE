@@ -19,6 +19,8 @@ import PdfRenderer from './PdfRenderer';
 
 const MAX_PREVIEW_GROUPS = 20;
 const MAX_PREVIEW_PAGES_PER_GROUP = 12;
+const PREVIEW_GROUP_BATCH_SIZE = 20;
+const PREVIEW_PAGE_BATCH_SIZE = 12;
 
 const readPdfPageCount = async (rawFile) => {
   const { getDocument } = await import('pdfjs-dist');
@@ -52,6 +54,8 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [totalPages, setTotalPages] = useState(null);
   const [ranges, setRanges] = useState([{ from: '1', to: '1' }]);
   const [pageRotations, setPageRotations] = useState({});
+  const [visibleGroupCount, setVisibleGroupCount] = useState(MAX_PREVIEW_GROUPS);
+  const [visiblePagesByGroup, setVisiblePagesByGroup] = useState({});
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const inputRef = useRef(null);
@@ -61,6 +65,8 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     setStatus('idle');
     setError('');
     setPageRotations({});
+    setVisibleGroupCount(MAX_PREVIEW_GROUPS);
+    setVisiblePagesByGroup({});
 
     try {
       const pageCount = await readPdfPageCount(rawFile);
@@ -106,17 +112,29 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     }))
     .filter((group) => group.pages.length > 0), [ranges, totalPages]);
 
-  const previewGroups = useMemo(() => normalizedGroups.slice(0, MAX_PREVIEW_GROUPS), [normalizedGroups]);
+  const previewGroups = useMemo(() => normalizedGroups.slice(0, visibleGroupCount), [normalizedGroups, visibleGroupCount]);
   const hiddenPreviewGroupCount = Math.max(0, normalizedGroups.length - previewGroups.length);
   const selectedPageCount = normalizedGroups.reduce((sum, group) => sum + group.pages.length, 0);
   const rotatedPageCount = Object.values(pageRotations).filter(Boolean).length;
 
-  const addRange = () => setRanges((current) => [...current, { from: '', to: '' }]);
-  const removeRange = (index) => setRanges((current) => current.filter((_, rowIndex) => rowIndex !== index));
+  const resetPreviewWindow = () => {
+    setVisibleGroupCount(MAX_PREVIEW_GROUPS);
+    setVisiblePagesByGroup({});
+  };
+
+  const addRange = () => {
+    setRanges((current) => [...current, { from: '', to: '' }]);
+    resetPreviewWindow();
+  };
+  const removeRange = (index) => {
+    setRanges((current) => current.filter((_, rowIndex) => rowIndex !== index));
+    resetPreviewWindow();
+  };
   const updateRange = (index, key, value) => {
     setRanges((current) => current.map((row, rowIndex) => (
       rowIndex === index ? { ...row, [key]: value } : row
     )));
+    resetPreviewWindow();
   };
 
   const rotatePage = (pageNumber, angle) => {
@@ -126,11 +144,26 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     }));
   };
 
+  const showMoreGroups = () => {
+    setVisibleGroupCount((current) => Math.min(current + PREVIEW_GROUP_BATCH_SIZE, normalizedGroups.length));
+  };
+
+  const showMorePages = (groupId, total) => {
+    setVisiblePagesByGroup((current) => {
+      const currentCount = current[groupId] || MAX_PREVIEW_PAGES_PER_GROUP;
+      return {
+        ...current,
+        [groupId]: Math.min(currentCount + PREVIEW_PAGE_BATCH_SIZE, total),
+      };
+    });
+  };
+
   const applySuggestion = (mode) => {
     if (!totalPages) return;
 
     if (mode === 'all') {
       setRanges([{ from: '1', to: String(totalPages) }]);
+      resetPreviewWindow();
       return;
     }
 
@@ -139,6 +172,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
         const page = String(index + 1);
         return { from: page, to: page };
       }));
+      resetPreviewWindow();
       return;
     }
 
@@ -146,6 +180,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       setRanges(totalPages > 1
         ? [{ from: '1', to: '1' }, { from: '2', to: String(totalPages) }]
         : [{ from: '1', to: '1' }]);
+      resetPreviewWindow();
       return;
     }
 
@@ -155,6 +190,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       chunks.push({ from: String(start), to: String(Math.min(totalPages, start + chunkSize - 1)) });
     }
     setRanges(chunks);
+    resetPreviewWindow();
   };
 
   const split = async () => {
@@ -317,57 +353,68 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
               </div>
 
               <div className="split-preview-list">
-                {previewGroups.map((group) => (
-                  <section className="split-preview-group" key={group.id}>
-                    <div className="split-preview-group-head">
-                      <strong>File {group.index + 1}</strong>
-                      <span>
-                        Trang {group.pages[0]}
-                        {group.pages.length > 1 ? `-${group.pages[group.pages.length - 1]}` : ''}
-                        {' '}· {group.pages.length} trang
-                      </span>
-                    </div>
-                    <div className="split-page-strip">
-                      {group.pages.slice(0, MAX_PREVIEW_PAGES_PER_GROUP).map((pageNumber) => (
-                        <div className="split-page-card" key={`${group.id}-${pageNumber}`}>
-                          <div className="split-page-preview">
-                            <PdfRenderer
-                              file={file}
-                              pageNum={pageNumber}
-                              width={132}
-                              rotation={pageRotations[pageNumber] || null}
-                            />
-                          </div>
-                          <div className="split-page-footer">
-                            <span>Trang {pageNumber}</span>
-                            <div>
-                              <button type="button" onClick={() => rotatePage(pageNumber, 270)} aria-label={`Xoay trái trang ${pageNumber}`}>
-                                <RotateCcw size={14} />
-                              </button>
-                              <button type="button" onClick={() => rotatePage(pageNumber, 180)} aria-label={`Lật trang ${pageNumber}`}>
-                                180
-                              </button>
-                              <button type="button" onClick={() => rotatePage(pageNumber, 90)} aria-label={`Xoay phải trang ${pageNumber}`}>
-                                <RotateCw size={14} />
-                              </button>
+                {previewGroups.map((group) => {
+                  const visiblePageCount = visiblePagesByGroup[group.id] || MAX_PREVIEW_PAGES_PER_GROUP;
+                  const visiblePages = group.pages.slice(0, visiblePageCount);
+                  const hiddenPageCount = Math.max(0, group.pages.length - visiblePages.length);
+
+                  return (
+                    <section className="split-preview-group" key={group.id}>
+                      <div className="split-preview-group-head">
+                        <strong>File {group.index + 1}</strong>
+                        <span>
+                          Trang {group.pages[0]}
+                          {group.pages.length > 1 ? `-${group.pages[group.pages.length - 1]}` : ''}
+                          {' '}· {group.pages.length} trang
+                        </span>
+                      </div>
+                      <div className="split-page-strip">
+                        {visiblePages.map((pageNumber) => (
+                          <div className="split-page-card" key={`${group.id}-${pageNumber}`}>
+                            <div className="split-page-preview">
+                              <PdfRenderer
+                                file={file}
+                                pageNum={pageNumber}
+                                width={132}
+                                rotation={pageRotations[pageNumber] || null}
+                              />
+                            </div>
+                            <div className="split-page-footer">
+                              <span>Trang {pageNumber}</span>
+                              <div>
+                                <button type="button" onClick={() => rotatePage(pageNumber, 270)} aria-label={`Xoay trái trang ${pageNumber}`}>
+                                  <RotateCcw size={14} />
+                                </button>
+                                <button type="button" onClick={() => rotatePage(pageNumber, 180)} aria-label={`Lật trang ${pageNumber}`}>
+                                  180
+                                </button>
+                                <button type="button" onClick={() => rotatePage(pageNumber, 90)} aria-label={`Xoay phải trang ${pageNumber}`}>
+                                  <RotateCw size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                      {group.pages.length > MAX_PREVIEW_PAGES_PER_GROUP && (
-                        <div className="split-page-card split-page-overflow">
-                          <div className="split-page-preview">
-                            <strong>+{group.pages.length - MAX_PREVIEW_PAGES_PER_GROUP}</strong>
-                            <span>trang nữa trong file này</span>
+                        ))}
+                        {hiddenPageCount > 0 && (
+                          <div className="split-page-card split-page-overflow">
+                            <button
+                              type="button"
+                              className="split-page-preview"
+                              onClick={() => showMorePages(group.id, group.pages.length)}
+                            >
+                              <strong>+{hiddenPageCount}</strong>
+                              <span>Hiện thêm trang</span>
+                            </button>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                  </section>
-                ))}
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
                 {hiddenPreviewGroupCount > 0 && (
                   <div className="split-preview-limit-note">
-                    Còn {hiddenPreviewGroupCount} file cắt chưa hiện thumbnail để tránh quá tải trình duyệt. Khi xuất ZIP vẫn cắt đầy đủ theo các khoảng đã nhập.
+                    <span>Còn {hiddenPreviewGroupCount} file cắt chưa hiện thumbnail để tránh quá tải trình duyệt. Khi xuất ZIP vẫn cắt đầy đủ theo các khoảng đã nhập.</span>
+                    <button type="button" onClick={showMoreGroups}>Hiện thêm file</button>
                   </div>
                 )}
               </div>
