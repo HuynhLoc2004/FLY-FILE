@@ -21,6 +21,8 @@ const MAX_PREVIEW_GROUPS = 20;
 const MAX_PREVIEW_PAGES_PER_GROUP = 12;
 const PREVIEW_GROUP_BATCH_SIZE = 20;
 const PREVIEW_PAGE_BATCH_SIZE = 12;
+const MAX_VISIBLE_RANGE_ROWS = 40;
+const RANGE_ROW_BATCH_SIZE = 40;
 
 const readPdfPageCount = async (rawFile) => {
   const { getDocument } = await import('pdfjs-dist');
@@ -39,14 +41,14 @@ const clampPage = (value, totalPages) => {
   return Math.min(Math.max(1, page), totalPages);
 };
 
-const buildPagesForRange = (range, totalPages) => {
+const buildPageGroupForRange = (range, totalPages) => {
   const from = clampPage(range.from, totalPages);
   const to = clampPage(range.to, totalPages);
-  if (!from || !to) return [];
+  if (!from || !to) return null;
 
   const start = Math.min(from, to);
   const end = Math.max(from, to);
-  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  return { start, end, pageCount: end - start + 1 };
 };
 
 const SplitWorkspace = ({ initialFiles, onCancel }) => {
@@ -56,6 +58,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [pageRotations, setPageRotations] = useState({});
   const [visibleGroupCount, setVisibleGroupCount] = useState(MAX_PREVIEW_GROUPS);
   const [visiblePagesByGroup, setVisiblePagesByGroup] = useState({});
+  const [visibleRangeCount, setVisibleRangeCount] = useState(MAX_VISIBLE_RANGE_ROWS);
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
   const inputRef = useRef(null);
@@ -67,6 +70,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     setPageRotations({});
     setVisibleGroupCount(MAX_PREVIEW_GROUPS);
     setVisiblePagesByGroup({});
+    setVisibleRangeCount(MAX_VISIBLE_RANGE_ROWS);
 
     try {
       const pageCount = await readPdfPageCount(rawFile);
@@ -105,21 +109,28 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   }, [initialFiles]);
 
   const normalizedGroups = useMemo(() => ranges
-    .map((range, index) => ({
-      id: `part-${index}`,
-      index,
-      pages: buildPagesForRange(range, totalPages),
-    }))
-    .filter((group) => group.pages.length > 0), [ranges, totalPages]);
+    .map((range, index) => {
+      const pageGroup = buildPageGroupForRange(range, totalPages);
+      if (!pageGroup) return null;
+      return {
+        id: `part-${index}`,
+        index,
+        ...pageGroup,
+      };
+    })
+    .filter(Boolean), [ranges, totalPages]);
 
   const previewGroups = useMemo(() => normalizedGroups.slice(0, visibleGroupCount), [normalizedGroups, visibleGroupCount]);
   const hiddenPreviewGroupCount = Math.max(0, normalizedGroups.length - previewGroups.length);
-  const selectedPageCount = normalizedGroups.reduce((sum, group) => sum + group.pages.length, 0);
+  const selectedPageCount = normalizedGroups.reduce((sum, group) => sum + group.pageCount, 0);
   const rotatedPageCount = Object.values(pageRotations).filter(Boolean).length;
+  const visibleRanges = ranges.slice(0, visibleRangeCount);
+  const hiddenRangeCount = Math.max(0, ranges.length - visibleRanges.length);
 
   const resetPreviewWindow = () => {
     setVisibleGroupCount(MAX_PREVIEW_GROUPS);
     setVisiblePagesByGroup({});
+    setVisibleRangeCount(MAX_VISIBLE_RANGE_ROWS);
   };
 
   const addRange = () => {
@@ -156,6 +167,10 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
         [groupId]: Math.min(currentCount + PREVIEW_PAGE_BATCH_SIZE, total),
       };
     });
+  };
+
+  const showMoreRanges = () => {
+    setVisibleRangeCount((current) => Math.min(current + RANGE_ROW_BATCH_SIZE, ranges.length));
   };
 
   const applySuggestion = (mode) => {
@@ -203,8 +218,8 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
 
       const rangeStr = normalizedGroups
         .map((group) => {
-          const first = group.pages[0];
-          const last = group.pages[group.pages.length - 1];
+          const first = group.start;
+          const last = group.end;
           return first === last ? String(first) : `${first}-${last}`;
         })
         .join(',');
@@ -290,7 +305,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                   <Layers size={16} />
                   Khoảng trang xuất ra
                 </div>
-                {ranges.map((range, index) => (
+                {visibleRanges.map((range, index) => (
                   <div key={`range-${index}`} className="split-range-row">
                     <span>File {index + 1}</span>
                     <input
@@ -317,6 +332,11 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                     )}
                   </div>
                 ))}
+                {hiddenRangeCount > 0 && (
+                  <button type="button" className="btn btn-outline split-add-range" onClick={showMoreRanges}>
+                    Hiện thêm {Math.min(RANGE_ROW_BATCH_SIZE, hiddenRangeCount)} khoảng
+                  </button>
+                )}
                 <button className="btn btn-outline split-add-range" onClick={addRange}>
                   <Plus size={14} /> Thêm file cắt
                 </button>
@@ -355,17 +375,20 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
               <div className="split-preview-list">
                 {previewGroups.map((group) => {
                   const visiblePageCount = visiblePagesByGroup[group.id] || MAX_PREVIEW_PAGES_PER_GROUP;
-                  const visiblePages = group.pages.slice(0, visiblePageCount);
-                  const hiddenPageCount = Math.max(0, group.pages.length - visiblePages.length);
+                  const visiblePages = Array.from(
+                    { length: Math.min(visiblePageCount, group.pageCount) },
+                    (_, index) => group.start + index
+                  );
+                  const hiddenPageCount = Math.max(0, group.pageCount - visiblePages.length);
 
                   return (
                     <section className="split-preview-group" key={group.id}>
                       <div className="split-preview-group-head">
                         <strong>File {group.index + 1}</strong>
                         <span>
-                          Trang {group.pages[0]}
-                          {group.pages.length > 1 ? `-${group.pages[group.pages.length - 1]}` : ''}
-                          {' '}· {group.pages.length} trang
+                          Trang {group.start}
+                          {group.pageCount > 1 ? `-${group.end}` : ''}
+                          {' '}· {group.pageCount} trang
                         </span>
                       </div>
                       <div className="split-page-strip">
@@ -400,7 +423,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                             <button
                               type="button"
                               className="split-page-preview"
-                              onClick={() => showMorePages(group.id, group.pages.length)}
+                              onClick={() => showMorePages(group.id, group.pageCount)}
                             >
                               <strong>+{hiddenPageCount}</strong>
                               <span>Hiện thêm trang</span>
