@@ -1180,6 +1180,38 @@ a {
   color: #0369a1;
 }
 
+.split-page-overflow .split-page-preview {
+  min-height: 194px;
+  color: #475569;
+  text-align: center;
+  padding: 18px;
+}
+
+.split-page-overflow strong {
+  display: block;
+  color: #0f172a;
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.split-page-overflow span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.split-preview-limit-note {
+  border: 1px solid rgba(14, 165, 233, 0.18);
+  border-radius: 12px;
+  background: rgba(240, 249, 255, 0.72);
+  color: #0369a1;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.5;
+  padding: 12px 14px;
+}
+
 .split-status-success,
 .split-status-error {
   margin-top: 14px;

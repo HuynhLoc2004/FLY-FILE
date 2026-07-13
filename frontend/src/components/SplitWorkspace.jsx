@@ -17,11 +17,17 @@ import {
 import { API_URL } from '../config/api';
 import PdfRenderer from './PdfRenderer';
 
+const MAX_PREVIEW_GROUPS = 20;
+const MAX_PREVIEW_PAGES_PER_GROUP = 12;
+
 const readPdfPageCount = async (rawFile) => {
   const { getDocument } = await import('pdfjs-dist');
   const buf = await rawFile.arrayBuffer();
-  const pdf = await getDocument({ data: buf }).promise;
-  return pdf.numPages;
+  const loadingTask = getDocument({ data: buf });
+  const pdf = await loadingTask.promise;
+  const pageCount = pdf.numPages;
+  await pdf.destroy();
+  return pageCount;
 };
 
 const clampPage = (value, totalPages) => {
@@ -92,7 +98,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     };
   }, [initialFiles]);
 
-  const previewGroups = useMemo(() => ranges
+  const normalizedGroups = useMemo(() => ranges
     .map((range, index) => ({
       id: `part-${index}`,
       index,
@@ -100,7 +106,9 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     }))
     .filter((group) => group.pages.length > 0), [ranges, totalPages]);
 
-  const selectedPageCount = previewGroups.reduce((sum, group) => sum + group.pages.length, 0);
+  const previewGroups = useMemo(() => normalizedGroups.slice(0, MAX_PREVIEW_GROUPS), [normalizedGroups]);
+  const hiddenPreviewGroupCount = Math.max(0, normalizedGroups.length - previewGroups.length);
+  const selectedPageCount = normalizedGroups.reduce((sum, group) => sum + group.pages.length, 0);
   const rotatedPageCount = Object.values(pageRotations).filter(Boolean).length;
 
   const addRange = () => setRanges((current) => [...current, { from: '', to: '' }]);
@@ -155,7 +163,6 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     setError('');
 
     try {
-      const normalizedGroups = previewGroups.filter((group) => group.pages.length > 0);
       if (!normalizedGroups.length) throw new Error('Vui lòng nhập ít nhất một khoảng trang');
 
       const rangeStr = normalizedGroups
@@ -280,7 +287,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
               </div>
 
               <div className="split-summary">
-                <div><Eye size={16} /> {previewGroups.length} file xem trước</div>
+                <div><Eye size={16} /> {normalizedGroups.length} file cắt</div>
                 <div>{selectedPageCount} trang sẽ được xuất</div>
                 <div>{rotatedPageCount} trang đã xoay</div>
               </div>
@@ -302,7 +309,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                   <p>Bản xem trước cắt file</p>
                   <h3>User sẽ nhìn thấy từng phần trước khi xuất</h3>
                 </div>
-                <button className="btn btn-primary" onClick={split} disabled={!file || status === 'loading' || previewGroups.length === 0}>
+                <button className="btn btn-primary" onClick={split} disabled={!file || status === 'loading' || normalizedGroups.length === 0}>
                   {status === 'loading'
                     ? <><Loader2 size={14} className="spin" /> Đang cắt...</>
                     : <><Download size={14} /> Xuất ZIP</>}
@@ -321,14 +328,14 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                       </span>
                     </div>
                     <div className="split-page-strip">
-                      {group.pages.map((pageNumber) => (
+                      {group.pages.slice(0, MAX_PREVIEW_PAGES_PER_GROUP).map((pageNumber) => (
                         <div className="split-page-card" key={`${group.id}-${pageNumber}`}>
                           <div className="split-page-preview">
                             <PdfRenderer
                               file={file}
                               pageNum={pageNumber}
                               width={132}
-                              rotation={pageRotations[pageNumber] || 0}
+                              rotation={pageRotations[pageNumber] || null}
                             />
                           </div>
                           <div className="split-page-footer">
@@ -347,9 +354,22 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                           </div>
                         </div>
                       ))}
+                      {group.pages.length > MAX_PREVIEW_PAGES_PER_GROUP && (
+                        <div className="split-page-card split-page-overflow">
+                          <div className="split-page-preview">
+                            <strong>+{group.pages.length - MAX_PREVIEW_PAGES_PER_GROUP}</strong>
+                            <span>trang nữa trong file này</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </section>
                 ))}
+                {hiddenPreviewGroupCount > 0 && (
+                  <div className="split-preview-limit-note">
+                    Còn {hiddenPreviewGroupCount} file cắt chưa hiện thumbnail để tránh quá tải trình duyệt. Khi xuất ZIP vẫn cắt đầy đủ theo các khoảng đã nhập.
+                  </div>
+                )}
               </div>
             </>
           )}

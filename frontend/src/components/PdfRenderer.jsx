@@ -8,7 +8,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-const PdfRenderer = ({ file, pageNum = 1, scale = 1.0, onDocumentLoad, rotation = 0, width }) => {
+const PdfRenderer = ({ file, pageNum = 1, scale = 1.0, onDocumentLoad, rotation = null, width }) => {
   const onLoadSuccess = ({ numPages }) => {
     if (onDocumentLoad) onDocumentLoad(numPages);
   };
@@ -48,7 +48,7 @@ const PdfRenderer = ({ file, pageNum = 1, scale = 1.0, onDocumentLoad, rotation 
       <Page
         pageNumber={pageNum}
         scale={scale}
-        rotate={rotation}
+        {...(rotation == null ? {} : { rotate: rotation })}
         width={width}
         renderAnnotationLayer={false}
         renderTextLayer={false}
