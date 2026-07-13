@@ -77,8 +77,12 @@ const config = toolConfig[toolId] || { title: 'Công cụ', formats: ['PDF'] };
     }
   };
 
+  const workspaceClassName = files.length > 0 && toolId === 'merge'
+    ? 'merge-workspace-wrapper'
+    : `tool-workspace${files.length > 0 && toolId === 'split' ? ' split-tool-workspace' : ''}`;
+
   return (
-    <div className={files.length > 0 && toolId === 'merge' ? 'merge-workspace-wrapper' : 'tool-workspace'}>
+    <div className={workspaceClassName}>
       <Suspense fallback={<ToolLoading />}>
         {/* Tools that manage their own full-page UI */}
         {toolId === 'translate' ? (

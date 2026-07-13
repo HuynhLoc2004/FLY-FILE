@@ -914,6 +914,32 @@ a {
   padding: 20px;
 }
 
+.split-tool-workspace {
+  align-items: stretch;
+  min-height: 0;
+}
+
+.split-tool-workspace .split-workspace {
+  min-height: 0;
+}
+
+.split-tool-workspace .split-layout {
+  align-items: stretch;
+  min-height: 0;
+}
+
+.split-tool-workspace .split-control-panel,
+.split-tool-workspace .split-preview-panel {
+  max-height: calc(100dvh - 230px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.split-tool-workspace .split-preview-panel {
+  min-height: min(560px, calc(100dvh - 230px));
+}
+
 .split-file-picker,
 .split-suggestions,
 .split-range-panel,
@@ -1278,6 +1304,12 @@ a {
 
   .split-preview-panel {
     min-height: 420px;
+  }
+
+  .split-tool-workspace .split-control-panel,
+  .split-tool-workspace .split-preview-panel {
+    max-height: none;
+    overflow-y: visible;
   }
 
   .split-page-strip {
