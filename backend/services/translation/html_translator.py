@@ -9,7 +9,6 @@ import json
 logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_MODELS = (
-    "gemini-2.5-pro",
     "gemini-2.5-flash",
 )
 
@@ -36,7 +35,10 @@ def get_gemini_api_key(api_key: str | None = None) -> str:
 def get_gemini_models() -> tuple[str, ...]:
     configured = os.environ.get("GEMINI_MODELS", "")
     models = tuple(model.strip() for model in configured.split(",") if model.strip())
-    return models or DEFAULT_GEMINI_MODELS
+    models = models or DEFAULT_GEMINI_MODELS
+    # Flash is substantially faster and more reliable for deterministic
+    # translation. Keep it first even if an older deployment configured Pro.
+    return tuple(sorted(models, key=lambda model: model != "gemini-2.5-flash"))
 
 VISION_PROMPT = """\
 You are a Vietnamese-to-English legal document translator for consular purposes.
@@ -127,7 +129,13 @@ def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
     from google import genai
     from google.genai import types
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=45_000,
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
     if file_b64:
         contents = [
             types.Part.from_bytes(data=base64.b64decode(file_b64), mime_type=mime_type),
@@ -136,7 +144,11 @@ def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
     else:
         contents = [types.Part.from_text(text=prompt_text)]
 
-    config = types.GenerateContentConfig(temperature=0.05, max_output_tokens=16384)
+    config = types.GenerateContentConfig(
+        temperature=0.05,
+        max_output_tokens=16384,
+        thinking_config=types.ThinkingConfig(thinking_budget=0),
+    )
     last_err = None
     for attempt in range(retries):
         try:
@@ -269,11 +281,23 @@ def translate_html_pages(html_pages: list[str], api_key: str | None = None,
                          for segment_index, text in enumerate(segments))
 
     translated_by_page = [[""] * len(item[2]) for item in prepared]
-    for start in range(0, len(flattened), max_segments_per_batch):
-        batch = flattened[start:start + max_segments_per_batch]
-        translated = _translate_segment_batch([item[2] for item in batch], key)
+    def translate_batch(batch: list[tuple[int, int, str]]) -> None:
+        try:
+            translated = _translate_segment_batch([item[2] for item in batch], key)
+        except TranslationProviderError:
+            # Large JSON arrays can occasionally be truncated. Split only that
+            # batch and continue; never discard all previously translated pages.
+            if len(batch) <= 20:
+                raise
+            middle = len(batch) // 2
+            translate_batch(batch[:middle])
+            translate_batch(batch[middle:])
+            return
         for (page_index, segment_index, _source), translated_text in zip(batch, translated):
             translated_by_page[page_index][segment_index] = translated_text
+
+    for start in range(0, len(flattened), max_segments_per_batch):
+        translate_batch(flattened[start:start + max_segments_per_batch])
 
     results = []
     for (soup, targets, _segments), translated in zip(prepared, translated_by_page):

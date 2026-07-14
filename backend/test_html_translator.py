@@ -116,6 +116,27 @@ class HtmlTranslatorConfigurationTests(unittest.TestCase):
         self.assertIn("EN page 2 line 2", translated[1])
         self.assertIn("EN page 3 line 1", translated[2])
 
+    @patch("services.translation.html_translator._call_gemini")
+    def test_failed_large_batch_is_split_without_losing_segments(self, call_gemini):
+        first_half = [f"EN {index}" for index in range(20)]
+        second_half = [f"EN {index}" for index in range(20, 40)]
+        call_gemini.side_effect = [
+            RuntimeError("truncated provider response"),
+            __import__("json").dumps(first_half),
+            __import__("json").dumps(second_half),
+        ]
+        html = '<div class="pdf-flow-block">' + "".join(
+            f"<p>VI {index}</p>" for index in range(40)
+        ) + "</div>"
+
+        translated = translate_html_pages(
+            [html], api_key="test-key", max_segments_per_batch=40
+        )[0]
+
+        self.assertEqual(call_gemini.call_count, 3)
+        for index in range(40):
+            self.assertIn(f"EN {index}", translated)
+
 
 if __name__ == "__main__":
     unittest.main()
