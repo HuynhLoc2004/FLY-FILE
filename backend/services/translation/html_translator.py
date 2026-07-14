@@ -4,6 +4,7 @@ HTML translator: sends PDF pages directly to Gemini, returns translated HTML.
 import re
 import logging
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,59 @@ def translate_scanned_image_to_html(image_b64: str, api_key: str | None = None) 
     return translate_pdf_page_to_html(image_b64, api_key)
 
 def translate_html_page(html: str, api_key: str | None = None, is_scanned: bool = False) -> str:
-    return html  # no longer used
+    """Translate text nodes only, rebuilding the original DOM unchanged.
+
+    Gemini never gets to recreate tags or CSS here. This makes font family,
+    size, bold, italic, alignment and spacing deterministic.
+    """
+    from bs4 import BeautifulSoup, NavigableString
+
+    soup = BeautifulSoup(html, "html.parser")
+    text_nodes = [
+        node for node in soup.find_all(string=True)
+        if isinstance(node, NavigableString)
+        and node.strip()
+        and node.parent
+        and node.parent.name not in {"style", "script"}
+        and not node.find_parent(attrs={"aria-hidden": "true"})
+    ]
+    source_segments = [str(node) for node in text_nodes]
+    if not source_segments:
+        return html
+
+    prompt = f"""You are a professional Vietnamese-to-English legal translator.
+Translate the JSON array below as one document, using context across all items.
+Return ONLY a valid JSON array with exactly {len(source_segments)} strings in the same order.
+Do not merge, split, omit, duplicate, or reorder items. Preserve numbers and identifiers exactly.
+Use natural, grammatically correct legal English. Personal names must be uppercase Latin without
+diacritics. Preserve punctuation belonging to each item. Do not output HTML or markdown.
+
+SOURCE SEGMENTS:
+{json.dumps(source_segments, ensure_ascii=False)}"""
+
+    key = get_gemini_api_key(api_key)
+    last_error: Exception | None = None
+    for model in get_gemini_models():
+        try:
+            raw = _call_gemini(model, key, prompt)
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.I)
+            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+            translated = json.loads(cleaned)
+            if not isinstance(translated, list) or len(translated) != len(text_nodes):
+                raise ValueError("Gemini returned a different number of text segments")
+            if not all(isinstance(item, str) for item in translated):
+                raise ValueError("Gemini returned non-text translation segments")
+
+            for node, translated_text in zip(text_nodes, translated):
+                node.replace_with(translated_text)
+            return sanitize_translated_html("".join(str(node) for node in soup.contents))
+        except Exception as exc:
+            last_error = exc
+            logger.warning("HTML text-node translation model %s failed: %s", model, exc)
+
+    raise TranslationProviderError(
+        "Gemini không thể dịch nội dung trong khi giữ nguyên định dạng PDF."
+    ) from last_error
 
 def translate_html_document(pages: list[dict], api_key: str | None = None) -> list[dict]:
     return pages  # no longer used

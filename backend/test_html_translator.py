@@ -9,6 +9,7 @@ from services.translation.html_translator import (
     get_gemini_api_key,
     get_gemini_models,
     sanitize_translated_html,
+    translate_html_page,
     translate_pdf_page_to_html,
 )
 
@@ -49,6 +50,28 @@ class HtmlTranslatorConfigurationTests(unittest.TestCase):
         with self.assertRaises(TranslationProviderError):
             translate_pdf_page_to_html("cGRm", api_key="test-key")
         self.assertEqual(call_gemini.call_count, len(DEFAULT_GEMINI_MODELS))
+
+    @patch(
+        "services.translation.html_translator._call_gemini",
+        return_value='["SOCIALIST REPUBLIC OF VIETNAM", "Independence - Freedom - Happiness"]',
+    )
+    def test_html_translation_replaces_text_only_and_preserves_exact_styles(self, _call):
+        source = (
+            '<p style="font-family:Arial;font-size:12pt;font-weight:bold;text-align:center">'
+            'CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</p>'
+            '<p style="font-family:Times New Roman;font-size:9pt;font-style:italic">'
+            'Độc lập - Tự do - Hạnh phúc</p>'
+        )
+
+        translated = translate_html_page(source, api_key="test-key")
+
+        self.assertIn("font-family:Arial", translated)
+        self.assertIn("font-size:12pt", translated)
+        self.assertIn("font-weight:bold", translated)
+        self.assertIn("font-family:Times New Roman", translated)
+        self.assertIn("font-style:italic", translated)
+        self.assertIn("SOCIALIST REPUBLIC OF VIETNAM", translated)
+        self.assertNotIn("CỘNG HÒA", translated)
 
 
 if __name__ == "__main__":

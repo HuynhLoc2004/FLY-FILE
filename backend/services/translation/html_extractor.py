@@ -35,6 +35,145 @@ def _escape(text: str) -> str:
     return html_lib.escape(text, quote=False)
 
 
+def _css_font_family(pdf_font_name: str) -> str:
+    """Map embedded PDF font names to browser-safe families."""
+    name = (pdf_font_name or "").lower()
+    if "times" in name or "serif" in name:
+        return "'Times New Roman',Times,serif"
+    if "arial" in name or "helvetica" in name or "sans" in name:
+        return "Arial,Helvetica,sans-serif"
+    if "courier" in name or "mono" in name:
+        return "'Courier New',Courier,monospace"
+    return "'Times New Roman',Times,serif"
+
+
+def _extract_qr_assets(page: fitz.Page, zoom: float = 3.0) -> list[dict]:
+    """Detect QR regions in the original page and preserve their real pixels."""
+    try:
+        import base64
+        import cv2
+        import numpy as np
+
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        image = cv2.imdecode(np.frombuffer(pix.tobytes("png"), dtype=np.uint8), cv2.IMREAD_COLOR)
+        found, points = cv2.QRCodeDetector().detectMulti(image)
+        if not found or points is None:
+            return []
+
+        assets = []
+        height, width = image.shape[:2]
+        for corners in points:
+            xs = corners[:, 0]
+            ys = corners[:, 1]
+            padding = max(8, int(min(xs.max() - xs.min(), ys.max() - ys.min()) * 0.08))
+            x0 = max(0, int(xs.min()) - padding)
+            y0 = max(0, int(ys.min()) - padding)
+            x1 = min(width, int(xs.max()) + padding)
+            y1 = min(height, int(ys.max()) + padding)
+            crop = image[y0:y1, x0:x1]
+            ok, encoded = cv2.imencode(".png", crop)
+            if not ok or crop.size == 0:
+                continue
+            assets.append({
+                "kind": "qr",
+                "data_uri": "data:image/png;base64," + base64.b64encode(encoded.tobytes()).decode(),
+                "bbox": [x0 / zoom, y0 / zoom, x1 / zoom, y1 / zoom],
+            })
+        return assets
+    except Exception as exc:
+        _logging.getLogger(__name__).warning("QR extraction failed: %s", exc)
+        return []
+
+
+def _extract_colored_mark_assets(page: fitz.Page, zoom: float = 3.0) -> list[dict]:
+    """Preserve red/blue stamps and handwritten signatures as transparent PNGs."""
+    try:
+        import base64
+        import cv2
+        import numpy as np
+
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        image = cv2.imdecode(np.frombuffer(pix.tobytes("png"), dtype=np.uint8), cv2.IMREAD_COLOR)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+        red = cv2.inRange(hsv, np.array([0, 65, 35]), np.array([12, 255, 255]))
+        red |= cv2.inRange(hsv, np.array([165, 65, 35]), np.array([179, 255, 255]))
+        blue = cv2.inRange(hsv, np.array([85, 55, 30]), np.array([145, 255, 255]))
+        color_mask = red | blue
+
+        # Join nearby pen/stamp strokes into visual regions without retaining
+        # the white page behind them.
+        joined = cv2.dilate(color_mask, cv2.getStructuringElement(cv2.MORPH_RECT, (25, 11)))
+        contours, _ = cv2.findContours(joined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        height, width = image.shape[:2]
+        assets = []
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            if w < 18 or h < 10 or w * h < 450 or w * h > width * height * 0.20:
+                continue
+            padding = max(5, int(min(w, h) * 0.08))
+            x0, y0 = max(0, x - padding), max(0, y - padding)
+            x1, y1 = min(width, x + w + padding), min(height, y + h + padding)
+            alpha = color_mask[y0:y1, x0:x1]
+            if cv2.countNonZero(alpha) < 35:
+                continue
+            crop = cv2.cvtColor(image[y0:y1, x0:x1], cv2.COLOR_BGR2BGRA)
+            crop[:, :, 3] = alpha
+            ok, encoded = cv2.imencode(".png", crop)
+            if not ok:
+                continue
+            assets.append({
+                "kind": "original_mark",
+                "data_uri": "data:image/png;base64," + base64.b64encode(encoded.tobytes()).decode(),
+                "bbox": [x0 / zoom, y0 / zoom, x1 / zoom, y1 / zoom],
+            })
+        return assets
+    except Exception as exc:
+        _logging.getLogger(__name__).warning("Stamp/signature extraction failed: %s", exc)
+        return []
+
+
+def _extract_preserved_assets(page: fitz.Page) -> list[dict]:
+    """Return original non-translatable visual marks from a PDF page."""
+    import base64
+
+    assets = _extract_qr_assets(page) + _extract_colored_mark_assets(page)
+    page_area = max(page.rect.width * page.rect.height, 1)
+    raw = page.get_text("dict")
+    for block in raw.get("blocks", []):
+        if block.get("type") != 1 or not block.get("image"):
+            continue
+        bbox = list(block.get("bbox", []))
+        if len(bbox) != 4:
+            continue
+        area = max(0, bbox[2] - bbox[0]) * max(0, bbox[3] - bbox[1])
+        # Preserve small embedded marks/logos/signatures, never a full-page scan.
+        if area < 25 or area / page_area > 0.20:
+            continue
+        cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        if any(a["bbox"][0] <= cx <= a["bbox"][2] and a["bbox"][1] <= cy <= a["bbox"][3]
+               for a in assets):
+            continue
+        extension = str(block.get("ext") or "png").lower()
+        mime_extension = "jpeg" if extension in {"jpg", "jpeg"} else extension
+        assets.append({
+            "kind": "original_image",
+            "data_uri": f"data:image/{mime_extension};base64," + base64.b64encode(block["image"]).decode(),
+            "bbox": bbox,
+        })
+    return assets
+
+
+def _inside_preserved_asset(bbox: list, assets: list[dict]) -> bool:
+    cx = (bbox[0] + bbox[2]) / 2
+    cy = (bbox[1] + bbox[3]) / 2
+    return any(
+        asset["bbox"][0] <= cx <= asset["bbox"][2]
+        and asset["bbox"][1] <= cy <= asset["bbox"][3]
+        for asset in assets
+    )
+
+
 def _is_inside_table(bbox: list, table_bboxes: list) -> bool:
     cx = (bbox[0] + bbox[2]) / 2
     cy = (bbox[1] + bbox[3]) / 2
@@ -96,7 +235,7 @@ def _table_to_html(grid: list, font_size: float = 11.0) -> str:
 
 # ── main entry point ──────────────────────────────────────────────────────────
 
-def _ocr_page_to_elements(page: fitz.Page, page_w: float) -> list[tuple]:
+def _ocr_page_to_elements(page: fitz.Page, page_w: float, preserved_assets: list[dict] | None = None) -> list[tuple]:
     """
     Run RapidOCR on a scanned page and return (y0, html_str, y1) elements.
     Each OCR result is a text box; we map bounding box position to alignment.
@@ -128,6 +267,8 @@ def _ocr_page_to_elements(page: fitz.Page, page_w: float) -> list[tuple]:
         y0 = min(ys) / zoom
         x1 = max(xs) / zoom
         y1 = max(ys) / zoom
+        if _inside_preserved_asset([x0, y0, x1, y1], preserved_assets or []):
+            continue
         h = y1 - y0
         font_size = round(h * 0.70, 1)  # heuristic: 70% of box height
         bold = font_size > 13.5
@@ -179,7 +320,7 @@ def _ocr_page_to_elements(page: fitz.Page, page_w: float) -> list[tuple]:
     return elements
 
 
-def pdf_page_to_html(page: fitz.Page) -> str:
+def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None) -> str:
     """
     Convert one fitz.Page to a self-contained HTML fragment.
     - For selectable-text PDFs: uses PyMuPDF dict extraction (preserves exact font sizes/bold).
@@ -212,7 +353,7 @@ def pdf_page_to_html(page: fitz.Page) -> str:
 
     if not has_native_text:
         # ── Pure image page: run RapidOCR ────────────────────────────────────
-        block_elements = _ocr_page_to_elements(page, page_w)
+        block_elements = _ocr_page_to_elements(page, page_w, preserved_assets)
         is_scanned = True
     else:
         raw = raw_dict  # reuse already-fetched dict
@@ -241,6 +382,8 @@ def pdf_page_to_html(page: fitz.Page) -> str:
             bbox = blk["bbox"]
             if _is_inside_table(bbox, table_bboxes):
                 continue
+            if _inside_preserved_asset(bbox, preserved_assets or []):
+                continue
 
             lines_html: list[str] = []
             max_size = 0.0
@@ -262,7 +405,7 @@ def pdf_page_to_html(page: fitz.Page) -> str:
                     bold = bool(sp["flags"] & 16)
                     italic = bool(sp["flags"] & 2)
 
-                    style = f"font-size:{size:.1f}pt;"
+                    style = f"font-family:{_css_font_family(sp.get('font', ''))};font-size:{size:.1f}pt;"
                     if bold:
                         style += "font-weight:bold;"
                     if italic:
@@ -318,13 +461,15 @@ def pdf_to_html_pages(pdf_bytes: bytes) -> list[dict]:
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
     for i, page in enumerate(doc):
-        html_content, is_scanned = pdf_page_to_html(page)
+        preserved_assets = _extract_preserved_assets(page)
+        html_content, is_scanned = pdf_page_to_html(page, preserved_assets)
         page_dict = {
             "page_num": i + 1,
             "width": page.rect.width,
             "height": page.rect.height,
             "html": html_content,
             "is_scanned": is_scanned,
+            "preserved_assets": preserved_assets,
         }
         if is_scanned:
             # Render high-res image for Gemini vision (3x = ~216 DPI)

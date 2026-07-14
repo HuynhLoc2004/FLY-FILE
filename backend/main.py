@@ -144,6 +144,7 @@ async def api_translate_pdf_html(
         TranslationConfigurationError,
         TranslationProviderError,
         get_gemini_api_key,
+        translate_html_page,
         translate_pdf_page_to_html,
     )
 
@@ -162,23 +163,9 @@ async def api_translate_pdf_html(
         content = await file.read()
         pages = pdf_to_html_pages(content)
 
-        # For pairing: use PyMuPDF text extraction to gauge if page 2 has real content
-        def _page_text_len(page_num: int) -> int:
-            doc = fitz.open(stream=content, filetype="pdf")
-            return len(doc[page_num - 1].get_text().strip())
-
-        # Group consecutive scanned pages in pairs when page 2 has real content (>200 chars)
-        page_groups: list[dict] = []
-        i = 0
-        while i < len(pages):
-            p = pages[i]
-            next_p = pages[i + 1] if i + 1 < len(pages) else None
-            if p.get("is_scanned") and next_p and next_p.get("is_scanned") and _page_text_len(next_p["page_num"]) > 200:
-                page_groups.append({"pages": [p, next_p], "paired": True})
-                i += 2
-            else:
-                page_groups.append({"pages": [p], "paired": False})
-                i += 1
+        # Keep every page independent. Pairing pages through a vision model lets
+        # the model recreate (and often alter) fonts, emphasis and preserved QR.
+        page_groups = [{"pages": [page], "paired": False} for page in pages]
 
         def _translate_group(group):
             page_list = group["pages"]
@@ -193,10 +180,37 @@ async def api_translate_pdf_html(
                 return [lead, follower]
             else:
                 p = page_list[0]
-                # Always send PDF directly to Gemini — works for both text and scanned PDFs
-                b64 = _extract_pages_as_pdf_b64(content, p["page_num"])
-                translated_html = translate_pdf_page_to_html(b64)
-                return [{**p, "translated_html": translated_html,
+                # Translate text nodes only whenever extraction produced usable HTML.
+                # This deterministically preserves the source DOM/CSS instead of
+                # asking the vision model to guess fonts and emphasis.
+                if p.get("html", "").strip():
+                    translated_html = translate_html_page(p["html"], is_scanned=p.get("is_scanned", False))
+                else:
+                    b64 = _extract_pages_as_pdf_b64(content, p["page_num"])
+                    translated_html = translate_pdf_page_to_html(b64)
+
+                assets = p.get("preserved_assets", [])
+                if assets:
+                    asset_tags = []
+                    page_width = max(float(p.get("width") or 1), 1)
+                    page_height = max(float(p.get("height") or 1), 1)
+                    for asset in assets:
+                        x0, y0, x1, y1 = asset["bbox"]
+                        asset_tags.append(
+                            f'<img src="{asset["data_uri"]}" '
+                            f'alt="{"QR Code" if asset.get("kind") == "qr" else "Original stamp or signature"}" '
+                            'data-preserved-asset="true" '
+                            f'style="position:absolute;left:{x0/page_width*100:.3f}%;'
+                            f'top:{y0/page_height*100:.3f}%;width:{(x1-x0)/page_width*100:.3f}%;'
+                            'height:auto;z-index:2"/>'
+                        )
+                    translated_html = (
+                        f'<div style="position:relative;min-height:240mm">{translated_html}'
+                        + "".join(asset_tags) + "</div>"
+                    )
+                public_page = {key: value for key, value in p.items()
+                               if key not in {"html", "image_b64", "preserved_assets"}}
+                return [{**public_page, "translated_html": translated_html,
                          "group_id": p["page_num"], "is_group_lead": True, "group_pages": [p["page_num"]]}]
 
         # Translate groups in parallel (max 4 concurrent Gemini calls)
@@ -242,9 +256,26 @@ def _html_to_pdf_bytes(html: str) -> bytes:
 
     try:
         from xhtml2pdf import pisa
+        from bs4 import BeautifulSoup
+
+        # xhtml2pdf cannot size absolutely-positioned images with percentages.
+        # Convert preserved QR coordinates to the printable A4 content box.
+        soup = BeautifulSoup(html, "html.parser")
+        for image in soup.find_all("img", attrs={"data-preserved-asset": "true"}):
+            declarations = {}
+            for declaration in image.get("style", "").split(";"):
+                name, separator, value = declaration.partition(":")
+                if separator:
+                    declarations[name.strip()] = value.strip()
+            for property_name, reference_points in (("left", 450), ("width", 450), ("top", 730)):
+                value = declarations.get(property_name, "")
+                if value.endswith("%"):
+                    declarations[property_name] = f"{float(value[:-1]) / 100 * reference_points:.2f}pt"
+            image["style"] = ";".join(f"{name}:{value}" for name, value in declarations.items())
+        portable_html = str(soup)
 
         output = io.BytesIO()
-        status = pisa.CreatePDF(src=html, dest=output, encoding="utf-8")
+        status = pisa.CreatePDF(src=portable_html, dest=output, encoding="utf-8")
         if status.err:
             raise RuntimeError(f"xhtml2pdf reported {status.err} rendering error(s)")
         pdf_bytes = output.getvalue()
