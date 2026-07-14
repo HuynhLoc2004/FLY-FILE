@@ -9,6 +9,8 @@ PDF → Word (DOCX) Converter.
 import io
 import logging
 import os
+import re
+import unicodedata
 import fitz  # PyMuPDF
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
@@ -17,6 +19,69 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 logger = logging.getLogger(__name__)
 GLOBAL_OCR_ENGINE = None
 TESSERACT_AVAILABLE = None  # None = unchecked, True/False after first check
+
+
+_INVALID_XML_CHARS = re.compile(
+    "[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]"
+)
+
+
+def _clean_text(value: object) -> str:
+    """Return Unicode text that is safe to put in JSON and DOCX XML."""
+    text = "" if value is None else str(value)
+    # Some Vietnamese PDFs store tone marks as combining characters. Word can
+    # render those inconsistently, so compose them before creating the DOCX.
+    text = unicodedata.normalize("NFC", text)
+    return _INVALID_XML_CHARS.sub("", text)
+
+
+def _span_text_with_spacing(spans: list[dict]) -> list[dict]:
+    """Copy PDF spans while restoring spaces omitted at span boundaries.
+
+    PyMuPDF correctly returns each glyph, but a common PDF encoding stores two
+    visible words in separate spans without including the visual space in
+    either span.  The horizontal gap between their bounding boxes is the most
+    reliable signal and lets us preserve run formatting as well.
+    """
+    result: list[dict] = []
+    previous_span = None
+
+    for span in spans:
+        text = _clean_text(span.get("text", ""))
+        if not text:
+            continue
+
+        if result and previous_span is not None:
+            previous_text = result[-1]["text"]
+            previous_bbox = previous_span.get("bbox") or (0, 0, 0, 0)
+            current_bbox = span.get("bbox") or (0, 0, 0, 0)
+            gap = float(current_bbox[0]) - float(previous_bbox[2])
+            font_size = min(
+                float(previous_span.get("size") or 11),
+                float(span.get("size") or 11),
+            )
+            needs_space = (
+                previous_text
+                and not previous_text[-1].isspace()
+                and not text[0].isspace()
+                and gap > max(0.8, font_size * 0.12)
+                and previous_text[-1] not in "([{/\u2018\u201c"
+                and text[0] not in ".,;:!?%)]}/\u2019\u201d"
+            )
+            if needs_space:
+                result[-1]["text"] += " "
+
+        raw_color = span.get("color", 0)
+        result.append({
+            "text": text,
+            "bold": bool(span.get("flags", 0) & 16),
+            "italic": bool(span.get("flags", 0) & 2),
+            "size": round(float(span.get("size") or 11), 1),
+            "color": None if raw_color == 0 else f"#{raw_color:06X}",
+        })
+        previous_span = span
+
+    return result
 
 
 def _try_tesseract_ocr(pix_bytes: bytes, zoom: float) -> list:
@@ -64,7 +129,7 @@ def _try_tesseract_ocr(pix_bytes: bytes, zoom: float) -> list:
         results = []
         for key in sorted(lines.keys()):
             e = lines[key]
-            text = " ".join(e["words"])
+            text = _clean_text(" ".join(e["words"]))
             results.append((
                 e["x0"] / zoom, e["y0"] / zoom,
                 e["x1"] / zoom, e["y1"] / zoom,
@@ -87,7 +152,7 @@ def _try_rapid_ocr(pix_bytes: bytes, zoom: float) -> list:
         ocr_result, _ = GLOBAL_OCR_ENGINE(pix_bytes)
         results = []
         for box, text, _score in ocr_result or []:
-            text = (text or "").strip()
+            text = _clean_text(text).strip()
             if not text:
                 continue
             xs = [point[0] for point in box]
@@ -227,7 +292,10 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
             # must not make the whole document fall back to plain text.
             logger.warning("Could not detect tables on PDF page %s", page_index + 1, exc_info=True)
             tables = []
-        table_bboxes = [list(t.bbox) for t in tables]
+        # Only successful table extractions may suppress native text blocks.
+        # Previously every detected bbox was used here, so a false-positive or
+        # malformed table could silently delete a whole paragraph from Word.
+        table_bboxes = []
         extracted_tables = []
 
         for t in tables:
@@ -243,14 +311,16 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                         cell_rect = t.cells[r * col_count + c]
                         if cell_rect is not None:
                             # Dùng word lookup để có khoảng trắng đúng
-                            txt = _words_in_rect(page_words,
-                                                 cell_rect[0], cell_rect[1],
-                                                 cell_rect[2], cell_rect[3])
+                            txt = _clean_text(_words_in_rect(
+                                page_words,
+                                cell_rect[0], cell_rect[1],
+                                cell_rect[2], cell_rect[3],
+                            ))
                         else:
                             # Merged cell hoặc None → fallback extract once.
                             if raw_table is None:
                                 raw_table = t.extract()
-                            txt = (str(raw_table[r][c] or "")
+                            txt = (_clean_text(raw_table[r][c] or "")
                                    if raw_table and r < len(raw_table) and c < len(raw_table[r])
                                    else "")
                         row.append(txt)
@@ -261,6 +331,7 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                     "bbox": list(t.bbox),
                     "cells": cells_better,
                 })
+                table_bboxes.append(list(t.bbox))
             except Exception:
                 logger.warning(
                     "Could not extract a table on PDF page %s; continuing without it",
@@ -269,9 +340,25 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                 )
 
         # 2. Smart OCR trigger
-        raw_text = page.get_text("text").strip()
-        has_visuals = len(page.get_images()) > 0 or len(page.get_drawings()) > 0
-        needs_ocr = len(raw_text) < 30 and has_visuals
+        raw_text = _clean_text(page.get_text("text")).strip()
+        page_area = max(page.rect.width * page.rect.height, 1)
+        image_coverage = 0.0
+        for image in page.get_images(full=True):
+            try:
+                for rect in page.get_image_rects(image[0]):
+                    image_coverage = min(
+                        1.0,
+                        image_coverage
+                        + max(rect.width, 0) * max(rect.height, 0) / page_area,
+                    )
+            except Exception:
+                continue
+        # Drawn lines/boxes are common in native forms and must not make a
+        # short but valid text page go through lossy OCR. OCR only pages with
+        # effectively no usable text and a page-sized scan image.
+        bad_glyphs = raw_text.count("\ufffd") + raw_text.count("\x00")
+        text_is_corrupt = bool(raw_text) and bad_glyphs / max(len(raw_text), 1) > 0.08
+        needs_ocr = image_coverage >= 0.55 and (len(raw_text) < 3 or text_is_corrupt)
 
         paragraphs = []
 
@@ -372,26 +459,13 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                 for ln in blk["lines"]:
                     line_runs = []
                     for sp in ln["spans"]:
-                        t = sp["text"]
-                        if not t:
-                            continue
                         sz = sp["size"]
                         bold = bool(sp["flags"] & 16)
-                        italic = bool(sp["flags"] & 2)
-                        # Extract color — PyMuPDF stores as 0xRRGGBB int
-                        raw_color = sp.get("color", 0)
-                        color_hex = None if raw_color == 0 else f"#{raw_color:06X}"
                         if sz > max_size:
                             max_size = sz
                         if bold:
                             blk_bold = True
-                        line_runs.append({
-                            "text": t,
-                            "bold": bold,
-                            "italic": italic,
-                            "size": round(sz, 1),
-                            "color": color_hex,
-                        })
+                    line_runs = _span_text_with_spacing(ln["spans"])
 
                     if line_runs:
                         line_list.append({"runs": line_runs})
@@ -411,9 +485,6 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                     "font_size": round(max_size, 1),
                     "lines": line_list,
                 })
-
-        # Gộp các block text liền kề thuộc cùng đoạn văn
-        paragraphs = _merge_paragraph_blocks(paragraphs, page_width)
 
         all_blocks = paragraphs + extracted_tables
         all_blocks.sort(key=lambda b: b["bbox"][1])
@@ -467,7 +538,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
         all_runs = []
         for l_idx, ln in enumerate(lines):
             for r_idx, rdata in enumerate(ln.get("runs", [])):
-                txt = rdata.get("text", "")
+                txt = _clean_text(rdata.get("text", ""))
                 if not txt:
                     continue
 
@@ -519,7 +590,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 tbl.style = "Table Grid"
                 for r_i, row in enumerate(cells):
                     for c_i in range(n_cols):
-                        val = str(row[c_i] or "") if c_i < len(row) else ""
+                        val = _clean_text(row[c_i] or "") if c_i < len(row) else ""
                         cell = tbl.cell(r_i, c_i)
                         cell.text = val
                         for cp in cell.paragraphs:
@@ -592,7 +663,7 @@ def build_plain_text_docx(pdf_bytes: bytes) -> bytes:
         if page_index:
             doc.add_page_break()
 
-        text = page.get_text("text").strip()
+        text = _clean_text(page.get_text("text")).strip()
         if text:
             for line in text.splitlines():
                 p = doc.add_paragraph(line)
