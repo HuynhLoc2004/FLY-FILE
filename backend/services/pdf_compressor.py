@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import fitz  # PyMuPDF
+from PIL import Image, ImageFilter
 
 MB = 1024 * 1024
 
@@ -63,7 +64,19 @@ def _render_pdf_as_image_pdf(file_bytes: bytes, *, zoom: float, quality: int) ->
                 colorspace=fitz.csRGB,
                 alpha=False,
             )
-            img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
+            image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            # A small edge boost keeps scanned text readable after JPEG encoding.
+            image = image.filter(ImageFilter.UnsharpMask(radius=0.8, percent=115, threshold=3))
+            image_io = io.BytesIO()
+            image.save(
+                image_io,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+                subsampling=1,
+            )
+            img_bytes = image_io.getvalue()
             new_page = out.new_page(width=page.rect.width, height=page.rect.height)
             new_page.insert_image(new_page.rect, stream=img_bytes)
 
@@ -153,7 +166,10 @@ def _pick_best_result(
 
     in_window = [blob for blob in valid if min_bytes <= len(blob) <= max_bytes]
     if in_window:
-        return min(in_window, key=lambda blob: abs(len(blob) - target_bytes))
+        # Results are ordered from highest to lowest visual quality. Once the
+        # requested size range is met, preserve quality instead of chasing an
+        # exact byte count with a blurrier candidate.
+        return in_window[0]
 
     above_target = [blob for blob in valid if len(blob) > target_bytes]
     if above_target:
@@ -161,7 +177,7 @@ def _pick_best_result(
 
     below_target = [blob for blob in valid if len(blob) <= target_bytes]
     if below_target:
-        return min(below_target, key=lambda blob: target_bytes - len(blob))
+        return below_target[0]
 
     return min(valid, key=len)
 
@@ -235,15 +251,15 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 for dpi_threshold, dpi_target, quality in native_candidates
             ]
             ghostscript_results = [
-                _compress_with_ghostscript(file_bytes, image_dpi=180, jpeg_quality=86),
-                _compress_with_ghostscript(file_bytes, image_dpi=160, jpeg_quality=82),
-                _compress_with_ghostscript(file_bytes, image_dpi=145, jpeg_quality=78),
+                _compress_with_ghostscript(file_bytes, image_dpi=200, jpeg_quality=84),
+                _compress_with_ghostscript(file_bytes, image_dpi=180, jpeg_quality=80),
+                _compress_with_ghostscript(file_bytes, image_dpi=165, jpeg_quality=76),
             ]
             raster_results = [
-                _render_pdf_as_image_pdf(file_bytes, zoom=1.9, quality=88),
-                _render_pdf_as_image_pdf(file_bytes, zoom=1.7, quality=84),
-                _render_pdf_as_image_pdf(file_bytes, zoom=1.55, quality=80),
-                _render_pdf_as_image_pdf(file_bytes, zoom=1.4, quality=76),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.6, quality=82),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.4, quality=79),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.2, quality=76),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.0, quality=73),
             ]
             return _pick_best_result(
                 original_size,
@@ -277,15 +293,15 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 for dpi_threshold, dpi_target, quality in native_candidates
             ]
             ghostscript_results = [
-                _compress_with_ghostscript(file_bytes, image_dpi=220, jpeg_quality=90),
-                _compress_with_ghostscript(file_bytes, image_dpi=200, jpeg_quality=86),
-                _compress_with_ghostscript(file_bytes, image_dpi=180, jpeg_quality=82),
+                _compress_with_ghostscript(file_bytes, image_dpi=240, jpeg_quality=88),
+                _compress_with_ghostscript(file_bytes, image_dpi=220, jpeg_quality=84),
+                _compress_with_ghostscript(file_bytes, image_dpi=200, jpeg_quality=80),
             ]
             raster_results = [
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.2, quality=92),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.0, quality=88),
-                _render_pdf_as_image_pdf(file_bytes, zoom=1.8, quality=84),
-                _render_pdf_as_image_pdf(file_bytes, zoom=1.65, quality=80),
+                _render_pdf_as_image_pdf(file_bytes, zoom=3.0, quality=86),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.8, quality=83),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.6, quality=80),
+                _render_pdf_as_image_pdf(file_bytes, zoom=2.4, quality=77),
             ]
             return _pick_best_result(
                 original_size,
