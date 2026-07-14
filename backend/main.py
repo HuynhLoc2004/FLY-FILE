@@ -5,6 +5,14 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import io, json, os, logging, traceback
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    # Production installs python-dotenv from requirements.txt. Keeping startup
+    # compatible makes diagnostics possible in an older local virtualenv too.
+    pass
+
 from services.pdf_merger import merge_pdfs
 from services.pdf_compressor import compress_pdf
 from services.pdf_page_merger import merge_pages_by_manifest
@@ -132,7 +140,12 @@ async def api_translate_pdf_html(
     import fitz  # PyMuPDF
     import re as _re
     from concurrent.futures import ThreadPoolExecutor
-    from services.translation.html_translator import translate_pdf_page_to_html
+    from services.translation.html_translator import (
+        TranslationConfigurationError,
+        TranslationProviderError,
+        get_gemini_api_key,
+        translate_pdf_page_to_html,
+    )
 
     def _extract_pages_as_pdf_b64(pdf_bytes: bytes, *page_nums: int) -> str:
         """Extract one or more pages from a PDF and return as base64 PDF bytes."""
@@ -143,6 +156,9 @@ async def api_translate_pdf_html(
         return base64.b64encode(out.tobytes()).decode()
 
     try:
+        # Fail once with an actionable message instead of returning one red
+        # "Translation failed" placeholder for every page.
+        get_gemini_api_key()
         content = await file.read()
         pages = pdf_to_html_pages(content)
 
@@ -169,10 +185,6 @@ async def api_translate_pdf_html(
             if group["paired"]:
                 b64 = _extract_pages_as_pdf_b64(content, page_list[0]["page_num"], page_list[1]["page_num"])
                 translated_html = translate_pdf_page_to_html(b64)
-                if not translated_html:
-                    h1 = translate_pdf_page_to_html(_extract_pages_as_pdf_b64(content, page_list[0]["page_num"]))
-                    h2 = translate_pdf_page_to_html(_extract_pages_as_pdf_b64(content, page_list[1]["page_num"]))
-                    translated_html = h1 + h2
                 group_pages = [p["page_num"] for p in page_list]
                 lead = {**page_list[0], "translated_html": translated_html,
                         "group_id": page_list[0]["page_num"], "is_group_lead": True, "group_pages": group_pages}
@@ -184,8 +196,6 @@ async def api_translate_pdf_html(
                 # Always send PDF directly to Gemini — works for both text and scanned PDFs
                 b64 = _extract_pages_as_pdf_b64(content, p["page_num"])
                 translated_html = translate_pdf_page_to_html(b64)
-                if not translated_html:
-                    translated_html = "<p style='color:#e53e3e;text-align:center;'>Translation failed for this page.</p>"
                 return [{**p, "translated_html": translated_html,
                          "group_id": p["page_num"], "is_group_lead": True, "group_pages": [p["page_num"]]}]
 
@@ -200,6 +210,13 @@ async def api_translate_pdf_html(
             "mode": "html",
             "pages": translated_pages,
         }
+    except TranslationConfigurationError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except TranslationProviderError as e:
+        logger.error("/api/translate-pdf/html provider failed", exc_info=True)
+        raise HTTPException(status_code=502, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("/api/translate-pdf/html failed")
         logger.error(traceback.format_exc())

@@ -1,5 +1,6 @@
 fastapi
 google-genai
+python-dotenv
 htmldocx
 xhtml2pdf
 beautifulsoup4

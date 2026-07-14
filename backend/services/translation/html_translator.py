@@ -7,11 +7,35 @@ import os
 
 logger = logging.getLogger(__name__)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-1.5-flash",
-]
+DEFAULT_GEMINI_MODELS = (
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+)
+
+
+class TranslationConfigurationError(RuntimeError):
+    """The translation provider has not been configured."""
+
+
+class TranslationProviderError(RuntimeError):
+    """Every configured translation model failed."""
+
+
+def get_gemini_api_key(api_key: str | None = None) -> str:
+    """Read the key at call time so .env/runtime changes are respected."""
+    key = (api_key or os.environ.get("GEMINI_API_KEY") or "").strip()
+    if not key:
+        raise TranslationConfigurationError(
+            "Chưa cấu hình GEMINI_API_KEY cho backend. "
+            "Hãy thêm key vào backend/.env rồi khởi động lại backend."
+        )
+    return key
+
+
+def get_gemini_models() -> tuple[str, ...]:
+    configured = os.environ.get("GEMINI_MODELS", "")
+    models = tuple(model.strip() for model in configured.split(",") if model.strip())
+    return models or DEFAULT_GEMINI_MODELS
 
 VISION_PROMPT = """\
 You are a Vietnamese-to-English legal document translator for consular purposes.
@@ -81,8 +105,9 @@ def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
 
 def translate_pdf_page_to_html(pdf_b64: str, api_key: str | None = None) -> str:
     """Send one PDF page to Gemini, return translated HTML fragment."""
-    key = api_key or GEMINI_API_KEY
-    for model in GEMINI_MODELS:
+    key = get_gemini_api_key(api_key)
+    last_error: Exception | None = None
+    for model in get_gemini_models():
         try:
             raw = _call_gemini(model, key, VISION_PROMPT, file_b64=pdf_b64, mime_type="application/pdf")
             result = re.sub(r"^```[a-z]*\s*", "", raw)
@@ -90,9 +115,16 @@ def translate_pdf_page_to_html(pdf_b64: str, api_key: str | None = None) -> str:
             if result and len(result) > 30:
                 logger.info(f"PDF translation succeeded: {model}")
                 return result
+            last_error = RuntimeError("Gemini returned an empty or incomplete response")
+            logger.warning("PDF translate model %s returned no usable HTML", model)
         except Exception as e:
-            logger.warning(f"PDF translate model {model} failed: {e}")
-    return ""
+            last_error = e
+            logger.warning("PDF translate model %s failed: %s", model, e)
+
+    raise TranslationProviderError(
+        "Gemini không thể dịch tài liệu bằng các model đã cấu hình. "
+        "Vui lòng kiểm tra API key, quota và GEMINI_MODELS."
+    ) from last_error
 
 
 # Compatibility aliases — kept so existing imports don't break

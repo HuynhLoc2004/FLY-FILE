@@ -31,8 +31,12 @@ Tạo `backend/.env` nếu cần:
 
 ```env
 GEMINI_API_KEY=your_key_here
+GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-flash-lite
 DEEPL_API_KEY=your_key_here
 ```
+
+`GEMINI_API_KEY` là bắt buộc cho chức năng Dịch PDF. Sau khi sửa `.env`, hãy
+khởi động lại backend để nạp cấu hình mới.
 
 Frontend dùng `VITE_API_URL` để trỏ tới backend khi deploy:
 
