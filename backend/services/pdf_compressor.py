@@ -5,22 +5,22 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     """
     Compress a PDF using PyMuPDF image re-rendering.
     Levels:
-      - 'medium': Good quality, significantly smaller size. (100 DPI, 70% JPEG quality)
-      - 'extreme': Lower quality, very small size. (65 DPI, 35% JPEG quality)
-      - 'ultra': Absolute smallest size. (36 DPI, 20% JPEG quality)
+      - 'medium': Clear text/table focus, smaller size. (~144 DPI, 82% JPEG quality)
+      - 'extreme': Strong compression, still readable. (~104 DPI, 62% JPEG quality)
+      - 'ultra': Maximum compression while keeping text usable. (~86 DPI, 50% JPEG quality)
     """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     new_doc = fitz.open()
 
     if level == "ultra":
-        zoom = 0.5      # ~36 DPI equivalent
-        quality = 20    # very low quality
+        zoom = 1.2
+        quality = 50
     elif level == "extreme":
-        zoom = 0.9      # ~65 DPI equivalent
-        quality = 35     # low quality
+        zoom = 1.45
+        quality = 62
     else: # medium
-        zoom = 1.4      # ~100 DPI equivalent
-        quality = 70    # good quality
+        zoom = 2.0
+        quality = 82
 
     for page in doc:
         # Render page to image at desired resolution
