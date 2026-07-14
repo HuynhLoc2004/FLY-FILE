@@ -297,30 +297,42 @@ def _ocr_page_to_elements(page: fitz.Page, page_w: float, preserved_assets: list
     elements: list[tuple] = []
     for row in rows:
         row.sort(key=lambda b: b[1])  # sort by x0
-        row_y0 = min(b[0] for b in row)
-        row_y1 = max(b[3] for b in row)
-        row_x0 = min(b[1] for b in row)
-        row_x1 = max(b[2] for b in row)
-        row_w = row_x1 - row_x0
-        avg_fs = sum(b[4] for b in row) / len(row)
-        is_large = avg_fs > 13.0
+        clusters: list[list] = []
+        for box in row:
+            if clusters:
+                gap = box[1] - clusters[-1][-1][2]
+                if gap <= max(18.0, page_w * 0.035):
+                    clusters[-1].append(box)
+                    continue
+            clusters.append([box])
 
-        align = _alignment(row_x0, row_w, page_w, is_large)
+        for cluster in clusters:
+            row_y0 = min(b[0] for b in cluster)
+            row_y1 = max(b[3] for b in cluster)
+            row_x0 = min(b[1] for b in cluster)
+            row_x1 = max(b[2] for b in cluster)
+            row_w = row_x1 - row_x0
+            avg_fs = sum(b[4] for b in cluster) / len(cluster)
+            align = _alignment(row_x0, row_w, page_w, avg_fs > 13.0)
 
-        parts = []
-        for _, _, _, _, fs, bold, text in row:
-            style = f"font-size:{fs:.1f}pt;"
-            if bold:
-                style += "font-weight:bold;"
-            parts.append(f'<span style="{style}">{_escape(text)}</span>')
+            parts = []
+            previous_x1 = None
+            for _, x0, x1, _, fs, bold, text in cluster:
+                if previous_x1 is not None and x0 - previous_x1 > max(0.8, fs * 0.12):
+                    parts.append(" ")
+                style = f"font-family:'Times New Roman',Times,serif;font-size:{fs:.1f}pt;"
+                if bold:
+                    style += "font-weight:bold;"
+                parts.append(f'<span style="{style}">{_escape(text)}</span>')
+                previous_x1 = x1
 
-        p_style = f"text-align:{align};margin:0;line-height:1.55;"
-        elements.append((
-            row_y0,
-            f'<p style="{p_style}">{"&nbsp;&nbsp;".join(parts)}</p>',
-            row_y1,
-            [row_x0, row_y0, row_x1, row_y1],
-        ))
+            p_style = f"text-align:{align};margin:0;line-height:1.35;"
+            elements.append((
+                row_y0,
+                f'<p style="{p_style}">{"".join(parts)}</p>',
+                row_y1,
+                [row_x0, row_y0, row_x1, row_y1],
+            ))
 
     return elements
 
@@ -394,43 +406,51 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
                 line_bbox = list(ln.get("bbox") or bbox)
                 if _inside_preserved_asset(line_bbox, preserved_assets or []):
                     continue
-                span_parts: list[str] = []
-                max_size = 0.0
-                for sp in ln["spans"]:
-                    t = sp["text"]
-                    if not t:
+                spans = [sp for sp in ln["spans"] if sp.get("text")]
+                spans.sort(key=lambda sp: sp.get("bbox", line_bbox)[0])
+                clusters: list[list] = []
+                for sp in spans:
+                    sp_bbox = sp.get("bbox", line_bbox)
+                    if clusters:
+                        previous_bbox = clusters[-1][-1].get("bbox", line_bbox)
+                        if sp_bbox[0] - previous_bbox[2] <= max(18.0, page_w * 0.035):
+                            clusters[-1].append(sp)
+                            continue
+                    clusters.append([sp])
+
+                for cluster in clusters:
+                    span_parts: list[str] = []
+                    max_size = 0.0
+                    previous_x1 = None
+                    cluster_boxes = []
+                    for sp in cluster:
+                        raw_size = sp["size"]
+                        size = max(6.0, round(min(raw_size * scale, 28.0), 1))
+                        max_size = max(max_size, size)
+                        sp_bbox = list(sp.get("bbox", line_bbox))
+                        cluster_boxes.append(sp_bbox)
+                        if (previous_x1 is not None and sp_bbox[0] - previous_x1 > max(0.8, size * 0.12)
+                                and not span_parts[-1].endswith((" ", "&nbsp;"))):
+                            span_parts.append(" ")
+                        style = f"font-family:{_css_font_family(sp.get('font', ''))};font-size:{size:.1f}pt;"
+                        if sp["flags"] & 16:
+                            style += "font-weight:bold;"
+                        if sp["flags"] & 2:
+                            style += "font-style:italic;"
+                        span_parts.append(f'<span style="{style}">{_escape(sp["text"])}</span>')
+                        previous_x1 = sp_bbox[2]
+
+                    if not span_parts:
                         continue
-                    raw_size = sp["size"]
-                    # Apply normalisation and cap extremes
-                    size = round(min(raw_size * scale, 28.0), 1)
-                    # Floor to avoid sub-6pt invisible text (e.g. watermarks)
-                    if size < 6.0:
-                        size = 6.0
-                    if size > max_size:
-                        max_size = size
-                    bold = bool(sp["flags"] & 16)
-                    italic = bool(sp["flags"] & 2)
-
-                    style = f"font-family:{_css_font_family(sp.get('font', ''))};font-size:{size:.1f}pt;"
-                    if bold:
-                        style += "font-weight:bold;"
-                    if italic:
-                        style += "font-style:italic;"
-
-                    span_parts.append(f'<span style="{style}">{_escape(t)}</span>')
-
-                if span_parts:
-                    x0, y0, x1, y1 = line_bbox
-                    line_w = x1 - x0
-                    is_large = max_size > TARGET_BODY * 1.2
-                    align = _alignment(x0, line_w, page_w, is_large)
+                    cluster_bbox = [
+                        min(box[0] for box in cluster_boxes), min(box[1] for box in cluster_boxes),
+                        max(box[2] for box in cluster_boxes), max(box[3] for box in cluster_boxes),
+                    ]
+                    x0, y0, x1, y1 = cluster_bbox
+                    align = _alignment(x0, x1 - x0, page_w, max_size > TARGET_BODY * 1.2)
                     p_style = f"text-align:{align};margin:0;line-height:1.35;"
-                    content = "".join(span_parts)
                     block_elements.append((
-                        y0,
-                        f'<p style="{p_style}">{content}</p>',
-                        y1,
-                        line_bbox,
+                        y0, f'<p style="{p_style}">{"".join(span_parts)}</p>', y1, cluster_bbox,
                     ))
 
     # ── 3. Merge tables + text, sort by y0 ───────────────────────────────────
