@@ -24,7 +24,9 @@ class WordToPdfTests(unittest.TestCase):
         self.assertIn("size:A3 landscape", _html_document(f"<table><tr>{row}</tr></table>"))
 
     def test_unicode_font_is_available(self):
-        self.assertIsNotNone(_unicode_font_path())
+        font = _unicode_font_path()
+        self.assertIsNotNone(font)
+        self.assertEqual(font.name, "NotoSans-Regular.ttf")
 
     def test_generated_pdf_keeps_vietnamese_and_wide_table(self):
         document = Document()
