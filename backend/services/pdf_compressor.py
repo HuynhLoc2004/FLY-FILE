@@ -7,57 +7,83 @@ ULTRA_TOLERANCE_BYTES = int(2.6 * 1024 * 1024)
 
 def _save_pdf_optimized(doc: fitz.Document) -> bytes:
     out_io = io.BytesIO()
-    doc.save(out_io, garbage=4, deflate=True, use_objstms=1)
+    try:
+        doc.subset_fonts()
+    except Exception:
+        pass
+    doc.save(
+        out_io,
+        garbage=4,
+        deflate=True,
+        deflate_images=True,
+        deflate_fonts=True,
+        use_objstms=1,
+        compression_effort=100,
+    )
     return out_io.getvalue()
 
 
-def _render_pdf_as_image_pdf(doc: fitz.Document, zoom: float, quality: int) -> bytes:
-    new_doc = fitz.open()
-
-    for page in doc:
-        matrix = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
-        img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
-
-        new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
-        new_page.insert_image(new_page.rect, stream=img_bytes)
-
-    out_io = io.BytesIO()
-    new_doc.save(out_io, garbage=4, deflate=True)
-    new_doc.close()
-    return out_io.getvalue()
+def _compress_native_pdf(
+    file_bytes: bytes,
+    *,
+    dpi_threshold: int,
+    dpi_target: int,
+    quality: int,
+    lossy: bool = True,
+    lossless: bool = True,
+) -> bytes:
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    try:
+        doc.rewrite_images(
+            dpi_threshold=dpi_threshold,
+            dpi_target=dpi_target,
+            quality=quality,
+            lossy=lossy,
+            lossless=lossless,
+            bitonal=False,
+            color=True,
+            gray=True,
+            set_to_gray=False,
+        )
+        return _save_pdf_optimized(doc)
+    finally:
+        doc.close()
 
 
 def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     """
-    Compress a PDF using PyMuPDF image re-rendering.
+    Compress a PDF while preserving native text/vector content whenever possible.
     Levels:
-      - 'medium': Clear text/table focus, smaller size. (~144 DPI, 82% JPEG quality)
-      - 'extreme': Strong compression, still readable. (~104 DPI, 62% JPEG quality)
-      - 'ultra': Adaptive compression targeting about 2-2.6 MB while preserving readability.
+      - 'medium': Mild native optimization, prioritizes clarity.
+      - 'extreme': Strong native image compression, keeps text sharper than full-page rasterization.
+      - 'ultra': Adaptive native compression targeting about 2-2.6 MB when possible.
     """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
+        base_optimized = _save_pdf_optimized(doc)
+
         if level == "ultra":
-            native_compressed = _save_pdf_optimized(doc)
-            if len(native_compressed) <= ULTRA_TOLERANCE_BYTES:
-                return native_compressed
+            if len(base_optimized) <= ULTRA_TOLERANCE_BYTES:
+                return base_optimized
 
             candidates = [
-                (2.35, 84),
-                (2.2, 82),
-                (2.05, 80),
-                (1.9, 78),
-                (1.75, 76),
-                (1.6, 74),
-                (1.45, 72),
-                (1.3, 70),
+                (300, 170, 72),
+                (260, 155, 68),
+                (240, 145, 64),
+                (220, 135, 60),
+                (200, 125, 56),
+                (180, 118, 52),
             ]
 
-            best_bytes = native_compressed
-            best_distance = abs(len(native_compressed) - ULTRA_TARGET_BYTES)
-            for zoom, quality in candidates:
-                compressed = _render_pdf_as_image_pdf(doc, zoom, quality)
+            best_bytes = base_optimized
+            best_distance = abs(len(base_optimized) - ULTRA_TARGET_BYTES)
+            for dpi_threshold, dpi_target, quality in candidates:
+                compressed = _compress_native_pdf(
+                    file_bytes,
+                    dpi_threshold=dpi_threshold,
+                    dpi_target=dpi_target,
+                    quality=quality,
+                )
                 compressed_size = len(compressed)
                 if compressed_size <= ULTRA_TOLERANCE_BYTES:
                     return compressed
@@ -67,11 +93,25 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                     best_bytes = compressed
                     best_distance = distance
 
-            return best_bytes if best_bytes is not None else _render_pdf_as_image_pdf(doc, 1.3, 70)
+            return best_bytes
 
         if level == "extreme":
-            return _render_pdf_as_image_pdf(doc, 1.45, 62)
+            compressed = _compress_native_pdf(
+                file_bytes,
+                dpi_threshold=240,
+                dpi_target=145,
+                quality=62,
+            )
+            return compressed if len(compressed) < len(base_optimized) else base_optimized
 
-        return _render_pdf_as_image_pdf(doc, 2.0, 82)
+        compressed = _compress_native_pdf(
+            file_bytes,
+            dpi_threshold=300,
+            dpi_target=190,
+            quality=80,
+            lossy=False,
+            lossless=True,
+        )
+        return compressed if len(compressed) < len(base_optimized) else base_optimized
     finally:
         doc.close()
