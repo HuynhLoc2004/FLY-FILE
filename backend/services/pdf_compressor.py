@@ -2,6 +2,13 @@ import io
 import fitz  # PyMuPDF
 
 ULTRA_TARGET_BYTES = 2 * 1024 * 1024
+ULTRA_TOLERANCE_BYTES = int(2.6 * 1024 * 1024)
+
+
+def _save_pdf_optimized(doc: fitz.Document) -> bytes:
+    out_io = io.BytesIO()
+    doc.save(out_io, garbage=4, deflate=True, use_objstms=1)
+    return out_io.getvalue()
 
 
 def _render_pdf_as_image_pdf(doc: fitz.Document, zoom: float, quality: int) -> bytes:
@@ -27,31 +34,40 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     Levels:
       - 'medium': Clear text/table focus, smaller size. (~144 DPI, 82% JPEG quality)
       - 'extreme': Strong compression, still readable. (~104 DPI, 62% JPEG quality)
-      - 'ultra': Adaptive compression targeting ~2 MB while preserving readability.
+      - 'ultra': Adaptive compression targeting about 2-2.6 MB while preserving readability.
     """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
         if level == "ultra":
+            native_compressed = _save_pdf_optimized(doc)
+            if len(native_compressed) <= ULTRA_TOLERANCE_BYTES:
+                return native_compressed
+
             candidates = [
-                (1.75, 74),
-                (1.6, 70),
-                (1.45, 66),
-                (1.35, 62),
-                (1.25, 58),
-                (1.15, 54),
-                (1.05, 50),
-                (0.95, 46),
+                (2.35, 84),
+                (2.2, 82),
+                (2.05, 80),
+                (1.9, 78),
+                (1.75, 76),
+                (1.6, 74),
+                (1.45, 72),
+                (1.3, 70),
             ]
 
-            best_bytes = None
+            best_bytes = native_compressed
+            best_distance = abs(len(native_compressed) - ULTRA_TARGET_BYTES)
             for zoom, quality in candidates:
                 compressed = _render_pdf_as_image_pdf(doc, zoom, quality)
-                if len(compressed) <= ULTRA_TARGET_BYTES:
+                compressed_size = len(compressed)
+                if compressed_size <= ULTRA_TOLERANCE_BYTES:
                     return compressed
-                if best_bytes is None or len(compressed) < len(best_bytes):
-                    best_bytes = compressed
 
-            return best_bytes if best_bytes is not None else _render_pdf_as_image_pdf(doc, 0.9, 42)
+                distance = abs(compressed_size - ULTRA_TARGET_BYTES)
+                if best_bytes is None or distance < best_distance:
+                    best_bytes = compressed
+                    best_distance = distance
+
+            return best_bytes if best_bytes is not None else _render_pdf_as_image_pdf(doc, 1.3, 70)
 
         if level == "extreme":
             return _render_pdf_as_image_pdf(doc, 1.45, 62)
