@@ -4,6 +4,9 @@ import fitz  # PyMuPDF
 EXTREME_TARGET_BYTES = 5 * 1024 * 1024
 EXTREME_MIN_BYTES = int(4.4 * 1024 * 1024)
 EXTREME_MAX_BYTES = int(5.6 * 1024 * 1024)
+MEDIUM_TARGET_BYTES = int(8.5 * 1024 * 1024)
+MEDIUM_MIN_BYTES = 7 * 1024 * 1024
+MEDIUM_MAX_BYTES = 10 * 1024 * 1024
 ULTRA_TARGET_BYTES = 2 * 1024 * 1024
 ULTRA_MIN_BYTES = int(1.75 * 1024 * 1024)
 ULTRA_MAX_BYTES = int(2.35 * 1024 * 1024)
@@ -102,7 +105,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     """
     Compress a PDF while preserving native text/vector content whenever possible.
     Levels:
-      - 'medium': Mild native optimization, prioritizes clarity.
+      - 'medium': Mild native compression targeting about 7-10 MB with high clarity.
       - 'extreme': Adaptive native compression targeting about 5 MB.
       - 'ultra': Adaptive native compression targeting about 2 MB.
     """
@@ -155,14 +158,27 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 base_optimized,
             )
 
-        compressed = _compress_native_pdf(
+        if MEDIUM_MIN_BYTES <= len(base_optimized) <= MEDIUM_MAX_BYTES:
+            return base_optimized
+
+        if len(base_optimized) < MEDIUM_MIN_BYTES:
+            return base_optimized
+
+        candidates = [
+            (480, 360, 96),
+            (460, 345, 95),
+            (440, 330, 94),
+            (420, 315, 93),
+            (400, 300, 92),
+            (380, 285, 91),
+        ]
+        return _pick_target_profile(
             file_bytes,
-            dpi_threshold=300,
-            dpi_target=190,
-            quality=80,
-            lossy=False,
-            lossless=True,
+            MEDIUM_TARGET_BYTES,
+            MEDIUM_MIN_BYTES,
+            MEDIUM_MAX_BYTES,
+            candidates,
+            base_optimized,
         )
-        return compressed if len(compressed) < len(base_optimized) else base_optimized
     finally:
         doc.close()
