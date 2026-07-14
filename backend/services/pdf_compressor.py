@@ -2,12 +2,15 @@ import io
 import shutil
 import subprocess
 import tempfile
+from functools import lru_cache
 from pathlib import Path
+from typing import Callable, TypeVar
 
 import fitz  # PyMuPDF
 from PIL import Image, ImageFilter
 
 MB = 1024 * 1024
+Candidate = TypeVar("Candidate")
 
 
 def _save_pdf_optimized(doc: fitz.Document) -> bytes:
@@ -88,6 +91,7 @@ def _render_pdf_as_image_pdf(file_bytes: bytes, *, zoom: float, quality: int) ->
         src.close()
 
 
+@lru_cache(maxsize=1)
 def _find_ghostscript_command() -> str | None:
     for name in ("gswin64c", "gswin32c", "gs"):
         command = shutil.which(name)
@@ -145,13 +149,6 @@ def _compress_with_ghostscript(file_bytes: bytes, *, image_dpi: int, jpeg_qualit
         return output_path.read_bytes()
 
 
-def _pick_smallest_result(original_size: int, results: list[bytes], fallback_bytes: bytes) -> bytes:
-    valid = [blob for blob in results if blob and len(blob) < original_size]
-    if not valid:
-        return fallback_bytes
-    return min(valid, key=len)
-
-
 def _pick_best_result(
     original_size: int,
     target_bytes: int,
@@ -180,6 +177,57 @@ def _pick_best_result(
         return below_target[0]
 
     return min(valid, key=len)
+
+
+def _search_ordered_candidates(
+    candidates: list[Candidate],
+    build: Callable[[Candidate], bytes | None],
+    max_bytes: int,
+) -> tuple[bytes | None, list[bytes]]:
+    """Find the highest-quality candidate under max_bytes with few builds.
+
+    Candidate lists must be ordered from highest quality / largest output to
+    lowest quality / smallest output. The first candidate is tested directly
+    because it is the common fast path; remaining candidates use binary search.
+    """
+    if not candidates:
+        return None, []
+
+    attempted: dict[int, bytes] = {}
+
+    def run(index: int) -> bytes | None:
+        if index in attempted:
+            return attempted[index]
+        result = build(candidates[index])
+        if result:
+            attempted[index] = result
+        return result
+
+    first = run(0)
+    if first is None:
+        # This also avoids retrying every Ghostscript setting when it is absent.
+        return None, []
+    if len(first) <= max_bytes:
+        return first, [first]
+
+    low = 1
+    high = len(candidates) - 1
+    best_index: int | None = None
+    while low <= high:
+        mid = (low + high) // 2
+        result = run(mid)
+        if result is None:
+            break
+        if len(result) <= max_bytes:
+            best_index = mid
+            high = mid - 1
+        else:
+            low = mid + 1
+
+    ordered_results = [attempted[index] for index in sorted(attempted)]
+    if best_index is not None:
+        return attempted[best_index], ordered_results
+    return None, ordered_results
 
 
 def _resolve_target_window(level: str, original_size: int) -> tuple[int, int, int]:
@@ -215,52 +263,76 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
       - 'extreme': Around 0.6% of original size, bounded to about 5-7 MB.
       - 'ultra': Around 0.3% of original size, bounded to about 2-4 MB.
     """
+    original_size = len(file_bytes)
+    medium_target, medium_min, medium_max = _resolve_target_window("medium", original_size)
+    extreme_target, extreme_min, extreme_max = _resolve_target_window("extreme", original_size)
+    ultra_target, ultra_min, ultra_max = _resolve_target_window("ultra", original_size)
+    level_max = {
+        "medium": medium_max,
+        "extreme": extreme_max,
+        "ultra": ultra_max,
+    }.get(level, medium_max)
+
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
-        base_optimized = _save_pdf_optimized(doc)
-        original_size = len(file_bytes)
-
-        if len(base_optimized) >= original_size:
+        # Avoid a full lossless-save pass for large files. Every native
+        # compression candidate already performs the same optimized save.
+        if original_size <= level_max:
+            base_optimized = _save_pdf_optimized(doc)
+            if len(base_optimized) >= original_size:
+                base_optimized = file_bytes
+        else:
             base_optimized = file_bytes
 
-        medium_target, medium_min, medium_max = _resolve_target_window("medium", original_size)
-        extreme_target, extreme_min, extreme_max = _resolve_target_window("extreme", original_size)
-        ultra_target, ultra_min, ultra_max = _resolve_target_window("ultra", original_size)
-
         if level == "ultra":
-            if ultra_min <= len(base_optimized) <= ultra_max and len(base_optimized) < original_size:
+            if len(base_optimized) <= ultra_max and len(base_optimized) < original_size:
                 return base_optimized
 
             native_candidates = [
-                (360, 250, 90),
-                (340, 240, 89),
-                (320, 230, 88),
                 (300, 220, 86),
-                (280, 210, 84),
-                (260, 200, 82),
                 (240, 190, 80),
             ]
 
-            native_results = [
-                _compress_native_pdf(
+            size_limit = min(ultra_max, original_size - 1)
+            native_match, native_results = _search_ordered_candidates(
+                native_candidates,
+                lambda candidate: _compress_native_pdf(
                     file_bytes,
-                    dpi_threshold=dpi_threshold,
-                    dpi_target=dpi_target,
-                    quality=quality,
-                )
-                for dpi_threshold, dpi_target, quality in native_candidates
-            ]
-            ghostscript_results = [
-                _compress_with_ghostscript(file_bytes, image_dpi=200, jpeg_quality=84),
-                _compress_with_ghostscript(file_bytes, image_dpi=180, jpeg_quality=80),
-                _compress_with_ghostscript(file_bytes, image_dpi=165, jpeg_quality=76),
-            ]
-            raster_results = [
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.6, quality=82),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.4, quality=79),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.2, quality=76),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.0, quality=73),
-            ]
+                    dpi_threshold=candidate[0],
+                    dpi_target=candidate[1],
+                    quality=candidate[2],
+                ),
+                size_limit,
+            )
+            if native_match:
+                return native_match
+
+            ghostscript_candidates = [(180, 80)]
+            ghostscript_match, ghostscript_results = _search_ordered_candidates(
+                ghostscript_candidates,
+                lambda candidate: _compress_with_ghostscript(
+                    file_bytes,
+                    image_dpi=candidate[0],
+                    jpeg_quality=candidate[1],
+                ),
+                size_limit,
+            )
+            if ghostscript_match:
+                return ghostscript_match
+
+            raster_candidates = [(2.2, 76)]
+            raster_match, raster_results = _search_ordered_candidates(
+                raster_candidates,
+                lambda candidate: _render_pdf_as_image_pdf(
+                    file_bytes,
+                    zoom=candidate[0],
+                    quality=candidate[1],
+                ),
+                size_limit,
+            )
+            if raster_match:
+                return raster_match
+
             return _pick_best_result(
                 original_size,
                 ultra_target,
@@ -271,38 +343,53 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             )
 
         if level == "extreme":
-            if extreme_min <= len(base_optimized) <= extreme_max and len(base_optimized) < original_size:
+            if len(base_optimized) <= extreme_max and len(base_optimized) < original_size:
                 return base_optimized
 
             native_candidates = [
-                (420, 300, 92),
-                (400, 285, 90),
-                (380, 270, 89),
                 (360, 255, 88),
-                (340, 240, 86),
-                (320, 225, 84),
                 (300, 210, 82),
             ]
-            native_results = [
-                _compress_native_pdf(
+            size_limit = min(extreme_max, original_size - 1)
+            native_match, native_results = _search_ordered_candidates(
+                native_candidates,
+                lambda candidate: _compress_native_pdf(
                     file_bytes,
-                    dpi_threshold=dpi_threshold,
-                    dpi_target=dpi_target,
-                    quality=quality,
-                )
-                for dpi_threshold, dpi_target, quality in native_candidates
-            ]
-            ghostscript_results = [
-                _compress_with_ghostscript(file_bytes, image_dpi=240, jpeg_quality=88),
-                _compress_with_ghostscript(file_bytes, image_dpi=220, jpeg_quality=84),
-                _compress_with_ghostscript(file_bytes, image_dpi=200, jpeg_quality=80),
-            ]
-            raster_results = [
-                _render_pdf_as_image_pdf(file_bytes, zoom=3.0, quality=86),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.8, quality=83),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.6, quality=80),
-                _render_pdf_as_image_pdf(file_bytes, zoom=2.4, quality=77),
-            ]
+                    dpi_threshold=candidate[0],
+                    dpi_target=candidate[1],
+                    quality=candidate[2],
+                ),
+                size_limit,
+            )
+            if native_match:
+                return native_match
+
+            ghostscript_candidates = [(220, 84)]
+            ghostscript_match, ghostscript_results = _search_ordered_candidates(
+                ghostscript_candidates,
+                lambda candidate: _compress_with_ghostscript(
+                    file_bytes,
+                    image_dpi=candidate[0],
+                    jpeg_quality=candidate[1],
+                ),
+                size_limit,
+            )
+            if ghostscript_match:
+                return ghostscript_match
+
+            raster_candidates = [(2.6, 80)]
+            raster_match, raster_results = _search_ordered_candidates(
+                raster_candidates,
+                lambda candidate: _render_pdf_as_image_pdf(
+                    file_bytes,
+                    zoom=candidate[0],
+                    quality=candidate[1],
+                ),
+                size_limit,
+            )
+            if raster_match:
+                return raster_match
+
             return _pick_best_result(
                 original_size,
                 extreme_target,
@@ -312,39 +399,56 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 base_optimized,
             )
 
-        if len(base_optimized) < original_size and medium_min <= len(base_optimized) <= medium_max:
+        if len(base_optimized) < original_size and len(base_optimized) <= medium_max:
             return base_optimized
 
         if original_size <= medium_max:
             return base_optimized
 
         native_candidates = [
-            (480, 360, 96),
-            (460, 345, 95),
-            (440, 330, 94),
             (420, 315, 93),
-            (400, 300, 92),
             (380, 285, 91),
         ]
-        native_results = [
-            _compress_native_pdf(
+        size_limit = min(medium_max, original_size - 1)
+        native_match, native_results = _search_ordered_candidates(
+            native_candidates,
+            lambda candidate: _compress_native_pdf(
                 file_bytes,
-                dpi_threshold=dpi_threshold,
-                dpi_target=dpi_target,
-                quality=quality,
-            )
-            for dpi_threshold, dpi_target, quality in native_candidates
-        ]
-        ghostscript_results = [
-            _compress_with_ghostscript(file_bytes, image_dpi=260, jpeg_quality=92),
-            _compress_with_ghostscript(file_bytes, image_dpi=240, jpeg_quality=90),
-            _compress_with_ghostscript(file_bytes, image_dpi=220, jpeg_quality=88),
-        ]
-        raster_results = [
-            _render_pdf_as_image_pdf(file_bytes, zoom=2.5, quality=95),
-            _render_pdf_as_image_pdf(file_bytes, zoom=2.3, quality=93),
-            _render_pdf_as_image_pdf(file_bytes, zoom=2.1, quality=91),
-        ]
+                dpi_threshold=candidate[0],
+                dpi_target=candidate[1],
+                quality=candidate[2],
+            ),
+            size_limit,
+        )
+        if native_match:
+            return native_match
+
+        ghostscript_candidates = [(240, 90)]
+        ghostscript_match, ghostscript_results = _search_ordered_candidates(
+            ghostscript_candidates,
+            lambda candidate: _compress_with_ghostscript(
+                file_bytes,
+                image_dpi=candidate[0],
+                jpeg_quality=candidate[1],
+            ),
+            size_limit,
+        )
+        if ghostscript_match:
+            return ghostscript_match
+
+        raster_candidates = [(2.3, 93)]
+        raster_match, raster_results = _search_ordered_candidates(
+            raster_candidates,
+            lambda candidate: _render_pdf_as_image_pdf(
+                file_bytes,
+                zoom=candidate[0],
+                quality=candidate[1],
+            ),
+            size_limit,
+        )
+        if raster_match:
+            return raster_match
+
         return _pick_best_result(
             original_size,
             medium_target,
