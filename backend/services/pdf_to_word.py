@@ -8,6 +8,7 @@ PDF → Word (DOCX) Converter.
 
 import io
 import logging
+import os
 import fitz  # PyMuPDF
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
@@ -30,7 +31,11 @@ def _try_tesseract_ocr(pix_bytes: bytes, zoom: float) -> list:
         import pytesseract
         from PIL import Image
 
-        pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        # Windows development machines commonly install Tesseract here. On
+        # Linux/Railway, keep pytesseract's PATH-based executable lookup.
+        windows_tesseract = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if os.path.exists(windows_tesseract):
+            pytesseract.pytesseract.tesseract_cmd = windows_tesseract
         img = Image.open(io.BytesIO(pix_bytes))
         data = pytesseract.image_to_data(
             img, lang="vie+eng",
@@ -68,6 +73,33 @@ def _try_tesseract_ocr(pix_bytes: bytes, zoom: float) -> list:
         return results
     except Exception:
         TESSERACT_AVAILABLE = False
+        return []
+
+
+def _try_rapid_ocr(pix_bytes: bytes, zoom: float) -> list:
+    """Run RapidOCR without allowing an OCR failure to abort the document."""
+    global GLOBAL_OCR_ENGINE
+    try:
+        if GLOBAL_OCR_ENGINE is None:
+            from rapidocr_onnxruntime import RapidOCR
+            GLOBAL_OCR_ENGINE = RapidOCR()
+
+        ocr_result, _ = GLOBAL_OCR_ENGINE(pix_bytes)
+        results = []
+        for box, text, _score in ocr_result or []:
+            text = (text or "").strip()
+            if not text:
+                continue
+            xs = [point[0] for point in box]
+            ys = [point[1] for point in box]
+            results.append((
+                min(xs) / zoom, min(ys) / zoom,
+                max(xs) / zoom, max(ys) / zoom,
+                text,
+            ))
+        return results
+    except Exception:
+        logger.warning("RapidOCR failed; preserving the scanned page as an image", exc_info=True)
         return []
 
 
@@ -173,7 +205,6 @@ def _merge_paragraph_blocks(blocks, page_width):
 # ── core extraction ───────────────────────────────────────────────────────────
 
 def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
-    global GLOBAL_OCR_ENGINE
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     if pdf_doc.needs_pass:
         pdf_doc.close()
@@ -200,31 +231,42 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
         extracted_tables = []
 
         for t in tables:
-            row_count = t.row_count
-            col_count = t.col_count
-            # table.cells là list Rect|None, len = row_count * col_count
-            cells_better = []
-            for r in range(row_count):
-                row = []
-                for c in range(col_count):
-                    cell_rect = t.cells[r * col_count + c]
-                    if cell_rect is not None:
-                        # Dùng word lookup để có khoảng trắng đúng
-                        txt = _words_in_rect(page_words,
-                                             cell_rect[0], cell_rect[1],
-                                             cell_rect[2], cell_rect[3])
-                    else:
-                        # Merged cell hoặc None → fallback extract
-                        raw = t.extract()
-                        txt = str(raw[r][c] or "") if raw and r < len(raw) and c < len(raw[r]) else ""
-                    row.append(txt)
-                cells_better.append(row)
+            try:
+                row_count = t.row_count
+                col_count = t.col_count
+                # table.cells là list Rect|None, len = row_count * col_count
+                cells_better = []
+                raw_table = None
+                for r in range(row_count):
+                    row = []
+                    for c in range(col_count):
+                        cell_rect = t.cells[r * col_count + c]
+                        if cell_rect is not None:
+                            # Dùng word lookup để có khoảng trắng đúng
+                            txt = _words_in_rect(page_words,
+                                                 cell_rect[0], cell_rect[1],
+                                                 cell_rect[2], cell_rect[3])
+                        else:
+                            # Merged cell hoặc None → fallback extract once.
+                            if raw_table is None:
+                                raw_table = t.extract()
+                            txt = (str(raw_table[r][c] or "")
+                                   if raw_table and r < len(raw_table) and c < len(raw_table[r])
+                                   else "")
+                        row.append(txt)
+                    cells_better.append(row)
 
-            extracted_tables.append({
-                "type": "table",
-                "bbox": list(t.bbox),
-                "cells": cells_better,
-            })
+                extracted_tables.append({
+                    "type": "table",
+                    "bbox": list(t.bbox),
+                    "cells": cells_better,
+                })
+            except Exception:
+                logger.warning(
+                    "Could not extract a table on PDF page %s; continuing without it",
+                    page_index + 1,
+                    exc_info=True,
+                )
 
         # 2. Smart OCR trigger
         raw_text = page.get_text("text").strip()
@@ -259,36 +301,35 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                                              "color": None}]}],
                     })
             else:
-                # Fallback: RapidOCR
-                global GLOBAL_OCR_ENGINE
-                if GLOBAL_OCR_ENGINE is None:
-                    from rapidocr_onnxruntime import RapidOCR
-                    GLOBAL_OCR_ENGINE = RapidOCR()
-                ocr_result, _ = GLOBAL_OCR_ENGINE(pix_bytes)
-                if ocr_result:
-                    for box, text, _ in ocr_result:
-                        t_str = text.strip()
-                        if not t_str:
-                            continue
-                        xs = [p[0] for p in box]
-                        ys = [p[1] for p in box]
-                        x0, y0 = min(xs) / zoom, min(ys) / zoom
-                        x1, y1 = max(xs) / zoom, max(ys) / zoom
-                        if _inside_table([x0, y0, x1, y1], table_bboxes):
-                            continue
-                        h = max(y1 - y0, 6)
-                        size = round(h * 0.75, 1)
-                        paragraphs.append({
-                            "type": "paragraph",
-                            "bbox": [x0, y0, x1, y1],
-                            "align": _detect_align(x0, x1, page_width),
-                            "is_bold": size > 14,
-                            "is_heading": size > 14,
-                            "font_size": size,
-                            "lines": [{"runs": [{"text": t_str, "bold": size > 14,
-                                                 "italic": False, "size": size,
-                                                 "color": None}]}],
-                        })
+                # Fallback: RapidOCR. It is isolated so a missing/incompatible
+                # OCR runtime cannot force the entire PDF into text fallback.
+                for x0, y0, x1, y1, t_str in _try_rapid_ocr(pix_bytes, zoom):
+                    if _inside_table([x0, y0, x1, y1], table_bboxes):
+                        continue
+                    h = max(y1 - y0, 6)
+                    size = round(h * 0.75, 1)
+                    paragraphs.append({
+                        "type": "paragraph",
+                        "bbox": [x0, y0, x1, y1],
+                        "align": _detect_align(x0, x1, page_width),
+                        "is_bold": size > 14,
+                        "is_heading": size > 14,
+                        "font_size": size,
+                        "lines": [{"runs": [{"text": t_str, "bold": size > 14,
+                                             "italic": False, "size": size,
+                                             "color": None}]}],
+                    })
+
+            # OCR can legitimately return nothing for photos, handwriting, or
+            # an unavailable OCR engine. Preserve the actual page in that case.
+            if not paragraphs:
+                paragraphs.append({
+                    "type": "image",
+                    "bbox": [0, 0, page.rect.width, page.rect.height],
+                    "ext": "png",
+                    "image": pix_bytes,
+                    "align": "center",
+                })
             paragraphs = _merge_paragraph_blocks(paragraphs, page_width)
 
         else:
@@ -533,7 +574,7 @@ def convert_pdf_bytes_to_docx_bytes(pdf_bytes: bytes) -> bytes:
 
 
 def build_plain_text_docx(pdf_bytes: bytes) -> bytes:
-    """Fallback converter for PDFs whose layout/table parsing fails."""
+    """Fallback converter that preserves scanned pages instead of placeholders."""
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     doc = Document()
 
@@ -552,14 +593,20 @@ def build_plain_text_docx(pdf_bytes: bytes) -> bytes:
             doc.add_page_break()
 
         text = page.get_text("text").strip()
-        if not text:
-            text = "[This page has no extractable text. It may be a scanned image.]"
-
-        for line in text.splitlines():
-            p = doc.add_paragraph(line)
-            for run in p.runs:
-                run.font.name = "Times New Roman"
-                run.font.size = Pt(12)
+        if text:
+            for line in text.splitlines():
+                p = doc.add_paragraph(line)
+                for run in p.runs:
+                    run.font.name = "Times New Roman"
+                    run.font.size = Pt(12)
+        else:
+            # A scan has no PDF text layer. Render the real page into Word so
+            # the result remains readable even if both OCR engines are absent.
+            pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_after = Pt(0)
+            p.add_run().add_picture(io.BytesIO(pix.tobytes("png")), width=Inches(5.8))
 
     pdf_doc.close()
     out = io.BytesIO()
