@@ -403,7 +403,8 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
                     </button>
                   </div>
                   <div className="file-preview-content">
-                    <PdfRenderer file={f.file} pageNum={1} width={110} rotation={f.rotation}
+                    <PdfRenderer file={f.file} pageNum={1} width={110}
+                      rotation={f.rotation || null}
                       onDocumentLoad={(count) => updatePages(f.id, count)} />
                   </div>
                 </div>
@@ -449,7 +450,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
                     </button>
                   </div>
                   <div className="file-preview-content">
-                    <PdfRenderer file={p.fileObj} pageNum={p.pageNum} width={110} rotation={p.rotation} />
+                    <PdfRenderer file={p.fileObj} pageNum={p.pageNum} width={110} rotation={p.rotation || null} />
                   </div>
                 </div>
                 <div className="file-info">
@@ -478,7 +479,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
             <div className="preview-modal-body">
               <div className="pdf-view-wrapper">
                 <PdfRenderer file={previewFile.file} pageNum={previewPage} width={500}
-                  rotation={previewFile.rotation}
+                  rotation={previewFile.rotation || null}
                   onDocumentLoad={(count) => updatePages(previewFile.id, count)} />
               </div>
             </div>
