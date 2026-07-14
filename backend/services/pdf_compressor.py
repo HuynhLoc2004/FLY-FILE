@@ -1,8 +1,12 @@
 import io
 import fitz  # PyMuPDF
 
+EXTREME_TARGET_BYTES = 5 * 1024 * 1024
+EXTREME_MIN_BYTES = int(4.4 * 1024 * 1024)
+EXTREME_MAX_BYTES = int(5.6 * 1024 * 1024)
 ULTRA_TARGET_BYTES = 2 * 1024 * 1024
-ULTRA_TOLERANCE_BYTES = int(2.6 * 1024 * 1024)
+ULTRA_MIN_BYTES = int(1.75 * 1024 * 1024)
+ULTRA_MAX_BYTES = int(2.35 * 1024 * 1024)
 
 
 def _save_pdf_optimized(doc: fitz.Document) -> bytes:
@@ -18,7 +22,6 @@ def _save_pdf_optimized(doc: fitz.Document) -> bytes:
         deflate_images=True,
         deflate_fonts=True,
         use_objstms=1,
-        compression_effort=100,
     )
     return out_io.getvalue()
 
@@ -50,59 +53,107 @@ def _compress_native_pdf(
         doc.close()
 
 
+def _pick_target_profile(file_bytes: bytes, target_bytes: int, min_bytes: int, max_bytes: int, candidates: list[tuple[int, int, int]], fallback_bytes: bytes) -> bytes:
+    best_in_window = None
+    best_above_target = None
+    best_above_distance = None
+    best_below_target = None
+    best_below_distance = None
+
+    for dpi_threshold, dpi_target, quality in candidates:
+        compressed = _compress_native_pdf(
+            file_bytes,
+            dpi_threshold=dpi_threshold,
+            dpi_target=dpi_target,
+            quality=quality,
+        )
+        compressed_size = len(compressed)
+        if compressed_size == 0:
+            continue
+
+        if min_bytes <= compressed_size <= max_bytes:
+            best_in_window = compressed
+            break
+
+        if compressed_size > target_bytes:
+            distance = compressed_size - target_bytes
+            if best_above_target is None or distance < best_above_distance:
+                best_above_target = compressed
+                best_above_distance = distance
+        else:
+            distance = target_bytes - compressed_size
+            if best_below_target is None or distance < best_below_distance:
+                best_below_target = compressed
+                best_below_distance = distance
+
+    if best_in_window is not None:
+        return best_in_window
+
+    if best_above_target is not None:
+        return best_above_target
+
+    if best_below_target is not None and len(best_below_target) >= min_bytes:
+        return best_below_target
+
+    return fallback_bytes
+
+
 def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     """
     Compress a PDF while preserving native text/vector content whenever possible.
     Levels:
       - 'medium': Mild native optimization, prioritizes clarity.
-      - 'extreme': Strong native image compression, keeps text sharper than full-page rasterization.
-      - 'ultra': Adaptive native compression targeting about 2-2.6 MB when possible.
+      - 'extreme': Adaptive native compression targeting about 5 MB.
+      - 'ultra': Adaptive native compression targeting about 2 MB.
     """
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
         base_optimized = _save_pdf_optimized(doc)
 
         if level == "ultra":
-            if len(base_optimized) <= ULTRA_TOLERANCE_BYTES:
+            if ULTRA_MIN_BYTES <= len(base_optimized) <= ULTRA_MAX_BYTES:
                 return base_optimized
 
             candidates = [
-                (300, 170, 72),
-                (260, 155, 68),
-                (240, 145, 64),
-                (220, 135, 60),
-                (200, 125, 56),
-                (180, 118, 52),
+                (360, 250, 90),
+                (340, 240, 89),
+                (320, 230, 88),
+                (300, 220, 86),
+                (280, 210, 84),
+                (260, 200, 82),
+                (240, 190, 80),
             ]
 
-            best_bytes = base_optimized
-            best_distance = abs(len(base_optimized) - ULTRA_TARGET_BYTES)
-            for dpi_threshold, dpi_target, quality in candidates:
-                compressed = _compress_native_pdf(
-                    file_bytes,
-                    dpi_threshold=dpi_threshold,
-                    dpi_target=dpi_target,
-                    quality=quality,
-                )
-                compressed_size = len(compressed)
-                if compressed_size <= ULTRA_TOLERANCE_BYTES:
-                    return compressed
-
-                distance = abs(compressed_size - ULTRA_TARGET_BYTES)
-                if best_bytes is None or distance < best_distance:
-                    best_bytes = compressed
-                    best_distance = distance
-
-            return best_bytes
+            return _pick_target_profile(
+                file_bytes,
+                ULTRA_TARGET_BYTES,
+                ULTRA_MIN_BYTES,
+                ULTRA_MAX_BYTES,
+                candidates,
+                base_optimized,
+            )
 
         if level == "extreme":
-            compressed = _compress_native_pdf(
+            if EXTREME_MIN_BYTES <= len(base_optimized) <= EXTREME_MAX_BYTES:
+                return base_optimized
+
+            candidates = [
+                (420, 300, 92),
+                (400, 285, 90),
+                (380, 270, 89),
+                (360, 255, 88),
+                (340, 240, 86),
+                (320, 225, 84),
+                (300, 210, 82),
+            ]
+            return _pick_target_profile(
                 file_bytes,
-                dpi_threshold=240,
-                dpi_target=145,
-                quality=62,
+                EXTREME_TARGET_BYTES,
+                EXTREME_MIN_BYTES,
+                EXTREME_MAX_BYTES,
+                candidates,
+                base_optimized,
             )
-            return compressed if len(compressed) < len(base_optimized) else base_optimized
 
         compressed = _compress_native_pdf(
             file_bytes,
