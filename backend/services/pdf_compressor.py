@@ -255,6 +255,11 @@ def _resolve_target_window(level: str, original_size: int) -> tuple[int, int, in
     )
 
 
+def _target_size_limit(target_bytes: int, max_bytes: int, original_size: int) -> int:
+    # Keep a small tolerance so a near-target, sharper result is not discarded.
+    return min(int(target_bytes * 1.08), max_bytes, original_size - 1)
+
+
 def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     """
     Compress a PDF while preserving native text/vector content whenever possible.
@@ -285,15 +290,15 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             base_optimized = file_bytes
 
         if level == "ultra":
-            if len(base_optimized) <= ultra_max and len(base_optimized) < original_size:
+            size_limit = _target_size_limit(ultra_target, ultra_max, original_size)
+            if len(base_optimized) <= size_limit and len(base_optimized) < original_size:
                 return base_optimized
 
             native_candidates = [
                 (300, 220, 86),
-                (240, 190, 80),
+                (220, 170, 76),
             ]
 
-            size_limit = min(ultra_max, original_size - 1)
             native_match, native_results = _search_ordered_candidates(
                 native_candidates,
                 lambda candidate: _compress_native_pdf(
@@ -307,7 +312,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             if native_match:
                 return native_match
 
-            ghostscript_candidates = [(180, 80)]
+            ghostscript_candidates = [(160, 76)]
             ghostscript_match, ghostscript_results = _search_ordered_candidates(
                 ghostscript_candidates,
                 lambda candidate: _compress_with_ghostscript(
@@ -320,7 +325,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             if ghostscript_match:
                 return ghostscript_match
 
-            raster_candidates = [(2.2, 76)]
+            raster_candidates = [(2.0, 74)]
             raster_match, raster_results = _search_ordered_candidates(
                 raster_candidates,
                 lambda candidate: _render_pdf_as_image_pdf(
@@ -343,14 +348,14 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             )
 
         if level == "extreme":
-            if len(base_optimized) <= extreme_max and len(base_optimized) < original_size:
+            size_limit = _target_size_limit(extreme_target, extreme_max, original_size)
+            if len(base_optimized) <= size_limit and len(base_optimized) < original_size:
                 return base_optimized
 
             native_candidates = [
                 (360, 255, 88),
-                (300, 210, 82),
+                (280, 190, 80),
             ]
-            size_limit = min(extreme_max, original_size - 1)
             native_match, native_results = _search_ordered_candidates(
                 native_candidates,
                 lambda candidate: _compress_native_pdf(
@@ -364,7 +369,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             if native_match:
                 return native_match
 
-            ghostscript_candidates = [(220, 84)]
+            ghostscript_candidates = [(195, 80)]
             ghostscript_match, ghostscript_results = _search_ordered_candidates(
                 ghostscript_candidates,
                 lambda candidate: _compress_with_ghostscript(
@@ -377,7 +382,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             if ghostscript_match:
                 return ghostscript_match
 
-            raster_candidates = [(2.6, 80)]
+            raster_candidates = [(2.4, 78)]
             raster_match, raster_results = _search_ordered_candidates(
                 raster_candidates,
                 lambda candidate: _render_pdf_as_image_pdf(
@@ -399,7 +404,8 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 base_optimized,
             )
 
-        if len(base_optimized) < original_size and len(base_optimized) <= medium_max:
+        size_limit = _target_size_limit(medium_target, medium_max, original_size)
+        if len(base_optimized) < original_size and len(base_optimized) <= size_limit:
             return base_optimized
 
         if original_size <= medium_max:
@@ -407,9 +413,8 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
 
         native_candidates = [
             (420, 315, 93),
-            (380, 285, 91),
+            (340, 250, 88),
         ]
-        size_limit = min(medium_max, original_size - 1)
         native_match, native_results = _search_ordered_candidates(
             native_candidates,
             lambda candidate: _compress_native_pdf(
@@ -423,7 +428,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
         if native_match:
             return native_match
 
-        ghostscript_candidates = [(240, 90)]
+        ghostscript_candidates = [(220, 88)]
         ghostscript_match, ghostscript_results = _search_ordered_candidates(
             ghostscript_candidates,
             lambda candidate: _compress_with_ghostscript(
@@ -436,7 +441,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
         if ghostscript_match:
             return ghostscript_match
 
-        raster_candidates = [(2.3, 93)]
+        raster_candidates = [(2.2, 90)]
         raster_match, raster_results = _search_ordered_candidates(
             raster_candidates,
             lambda candidate: _render_pdf_as_image_pdf(
