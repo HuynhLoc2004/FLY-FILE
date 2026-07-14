@@ -10,14 +10,28 @@ import { API_URL } from '../config/api';
 
 let nextFileId = 1;
 
-const createWorkspaceFile = (file) => ({
+const readPdfPageCount = async (rawFile) => {
+  try {
+    const { getDocument } = await import('pdfjs-dist');
+    const buf = await rawFile.arrayBuffer();
+    const loadingTask = getDocument({ data: buf });
+    const pdf = await loadingTask.promise;
+    const pageCount = pdf.numPages;
+    await pdf.destroy();
+    return pageCount;
+  } catch {
+    return 1;
+  }
+};
+
+const createWorkspaceFile = (file, pageCount = 1) => ({
   id: `file-${nextFileId++}`,
   file,
   name: file.name.replace(/\.[^/.]+$/, ''),
   extension: file.name.split('.').pop(),
   selected: false,
   rotation: 0,
-  pages: 1,
+  pages: Math.max(pageCount, 1),
 });
 
 // ── Build flat page list from files array ────────────────────────────────────
@@ -35,6 +49,34 @@ const buildPageList = (files) =>
       rotation: f.rotation,
     }))
   );
+
+const mergeIncomingPagesIntoPageList = (currentPages, incomingFiles) => {
+  const incomingPages = buildPageList(incomingFiles);
+  if (!incomingPages.length) return currentPages;
+
+  const selectedIndexes = currentPages.reduce((acc, page, index) => {
+    if (page.selected) acc.push(index);
+    return acc;
+  }, []);
+
+  if (!selectedIndexes.length || incomingPages.length > selectedIndexes.length) {
+    return [...currentPages, ...incomingPages];
+  }
+
+  const nextPages = [...currentPages];
+  incomingPages.forEach((incomingPage, index) => {
+    const targetIndex = selectedIndexes[index];
+    const currentPage = nextPages[targetIndex];
+    nextPages[targetIndex] = {
+      ...currentPage,
+      ...incomingPage,
+      selected: true,
+      rotation: incomingPage.rotation || 0,
+    };
+  });
+
+  return nextPages;
+};
 
 const MergeWorkspace = ({ initialFiles, onCancel }) => {
   // ── Core state ────────────────────────────────────────────────────────────
@@ -60,14 +102,17 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
   const enterFileView = () => setViewMode('files');
 
   // ── File helpers ─────────────────────────────────────────────────────────
-  const addRawFiles = useCallback((rawFiles) => {
-    setFiles(prev => [
-      ...prev,
-      ...rawFiles.map((file) => createWorkspaceFile(file)),
-    ]);
-    // If in page view, reset back to file view so pages rebuild
-    setViewMode(current => current === 'pages' ? 'files' : current);
-  }, []);
+  const addRawFiles = useCallback(async (rawFiles) => {
+    const workspaceFiles = await Promise.all(
+      rawFiles.map(async (file) => createWorkspaceFile(file, await readPdfPageCount(file)))
+    );
+
+    setFiles((prev) => [...prev, ...workspaceFiles]);
+
+    if (viewMode === 'pages') {
+      setPages((prev) => mergeIncomingPagesIntoPageList(prev, workspaceFiles));
+    }
+  }, [viewMode]);
 
   // ── Global drag-and-drop (add files by dropping anywhere) ─────────────────
   useEffect(() => {

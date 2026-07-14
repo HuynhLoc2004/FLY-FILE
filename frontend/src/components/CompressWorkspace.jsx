@@ -200,7 +200,7 @@ clearInterval(interval);
           </div>
           <div style={{ flex: 1 }}>
             <strong style={{ display: 'block', fontSize: 15, color: '#2d3748' }}>Nén vừa (Khuyên dùng)</strong>
-            <span style={{ fontSize: 12, color: '#718096' }}>Giảm kích thước đáng kể nhưng vẫn đảm bảo chữ viết cực kỳ sắc nét.</span>
+            <span style={{ fontSize: 12, color: '#718096' }}>Ưu tiên giữ nguyên độ nét chữ và bố cục, phù hợp hồ sơ cần đọc rõ.</span>
           </div>
         </label>
 
@@ -225,7 +225,7 @@ clearInterval(interval);
           </div>
           <div style={{ flex: 1 }}>
             <strong style={{ display: 'block', fontSize: 15, color: '#2d3748' }}>Nén cực mạnh</strong>
-            <span style={{ fontSize: 12, color: '#718096' }}>Giảm dung lượng xuống mức tối đa (thích hợp để up lên các trang web nộp hồ sơ giới hạn dung lượng thấp).</span>
+            <span style={{ fontSize: 12, color: '#718096' }}>Giảm mạnh dung lượng nhưng vẫn giữ chữ đủ nét để đọc và nộp hồ sơ.</span>
           </div>
         </label>
 
@@ -249,8 +249,8 @@ clearInterval(interval);
             <Zap size={22} />
           </div>
           <div style={{ flex: 1 }}>
-            <strong style={{ display: 'block', fontSize: 15, color: '#2d3748' }}>Nén siêu tối ưu (Target ~2MB)</strong>
-            <span style={{ fontSize: 12, color: '#718096' }}>Giảm dung lượng tối đa, phù hợp khi cần file dưới 3MB để upload lên website.</span>
+            <strong style={{ display: 'block', fontSize: 15, color: '#2d3748' }}>Nén siêu tối ưu</strong>
+            <span style={{ fontSize: 12, color: '#718096' }}>Ưu tiên giảm tối đa trong ngưỡng vẫn còn đọc rõ, không ép vỡ chữ như trước.</span>
           </div>
         </label>
       </div>
