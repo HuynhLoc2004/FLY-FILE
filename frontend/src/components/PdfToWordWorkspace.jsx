@@ -1,7 +1,8 @@
-import { useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
+import { renderAsync } from 'docx-preview';
 import {
   FileText, Download, RefreshCw, Loader2,
-  AlertCircle, UploadCloud, CheckCircle2,
+  AlertCircle, UploadCloud, CheckCircle2, Eye,
 } from 'lucide-react';
 import { API_URL } from '../config/api';
 
@@ -17,7 +18,45 @@ const PdfToWordWorkspace = () => {
   const [resultBlob, setResultBlob]   = useState(null);
   const [resultName, setResultName]   = useState('');
   const [dragging, setDragging]       = useState(false);
+  const [previewStatus, setPreviewStatus] = useState('idle'); // idle|loading|ready|error
+  const [previewError, setPreviewError] = useState('');
   const inputRef = useRef(null);
+  const previewRef = useRef(null);
+
+  useEffect(() => {
+    if (status !== 'done' || !resultBlob || !previewRef.current) return undefined;
+
+    let cancelled = false;
+    const container = previewRef.current;
+    container.innerHTML = '';
+    setPreviewStatus('loading');
+    setPreviewError('');
+
+    renderAsync(resultBlob, container, container, {
+      className: 'docx',
+      inWrapper: true,
+      breakPages: true,
+      ignoreWidth: false,
+      ignoreHeight: false,
+      ignoreFonts: false,
+      renderHeaders: true,
+      renderFooters: true,
+    })
+      .then(() => {
+        if (!cancelled) setPreviewStatus('ready');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        container.innerHTML = '';
+        setPreviewError(error?.message || 'Không thể hiển thị bản xem trước.');
+        setPreviewStatus('error');
+      });
+
+    return () => {
+      cancelled = true;
+      container.innerHTML = '';
+    };
+  }, [status, resultBlob]);
 
   const formatSize = (b) => {
     if (!b) return '0 B';
@@ -101,6 +140,8 @@ const PdfToWordWorkspace = () => {
     setResultName('');
     setErrorMsg('');
     setProgress(0);
+    setPreviewStatus('idle');
+    setPreviewError('');
     if (inputRef.current) inputRef.current.value = '';
   };
 
@@ -172,42 +213,72 @@ const PdfToWordWorkspace = () => {
 
   // ── done ─────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ maxWidth: 520, margin: '80px auto', padding: 36, background: '#fff', borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.09)', textAlign: 'center' }}>
-      {/* Icon */}
-      <div style={{ width: 70, height: 70, borderRadius: '50%', background: '#ebf8ff', color: '#0062ff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' }}>
-        <CheckCircle2 size={38} />
-      </div>
-
-      <h3 style={{ fontSize: 20, fontWeight: 700, color: '#1a202c', marginBottom: 4 }}>Chuyển đổi thành công!</h3>
-      <p style={{ fontSize: 13, color: '#718096', marginBottom: 24, wordBreak: 'break-all' }}>{file?.name}</p>
-
-      {/* File card */}
-      <div style={{ background: '#f7fafc', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28, textAlign: 'left' }}>
-        <div style={{ width: 44, height: 44, background: '#dbeafe', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <FileText size={22} style={{ color: '#2563eb' }} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: '#2d3748', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {resultName}
-          </div>
-          <div style={{ fontSize: 12, color: '#718096', marginTop: 3 }}>
-            Microsoft Word (.docx) · {formatSize(resultBlob?.size)}
-          </div>
+    <div className="pdf-word-result-workspace">
+      <div className="pdf-word-result-heading">
+        <div className="pdf-word-success-icon"><CheckCircle2 size={30} /></div>
+        <div>
+          <h3>Chuyển đổi thành công!</h3>
+          <p>{file?.name}</p>
         </div>
       </div>
 
-      {/* Actions */}
-      <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-        <button className="btn btn-primary"
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 24px', background: '#0062ff', fontSize: 14 }}
-          onClick={download}>
-          <Download size={16} /> Tải file Word
-        </button>
-        <button className="btn btn-outline"
-          style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '10px 18px', fontSize: 14 }}
-          onClick={reset}>
-          <RefreshCw size={14} /> Chuyển file khác
-        </button>
+      <div className="pdf-word-result-grid">
+        <aside className="pdf-word-result-sidebar">
+          <div className="pdf-word-file-card">
+            <div className="pdf-word-file-icon">
+              <FileText size={24} />
+            </div>
+            <div className="pdf-word-file-meta">
+              <strong>{resultName}</strong>
+              <span>Microsoft Word (.docx) · {formatSize(resultBlob?.size)}</span>
+            </div>
+          </div>
+
+          <div className="pdf-word-result-note">
+            <Eye size={17} />
+            <p>Bản xem trước giúp kiểm tra nhanh nội dung. File tải xuống vẫn giữ định dạng DOCX để chỉnh sửa trong Word.</p>
+          </div>
+
+          <div className="pdf-word-result-actions">
+            <button className="btn btn-primary" onClick={download}>
+              <Download size={16} /> Tải file Word
+            </button>
+            <button className="btn btn-outline" onClick={reset}>
+              <RefreshCw size={14} /> Chuyển file khác
+            </button>
+          </div>
+        </aside>
+
+        <section className="pdf-word-preview-panel">
+          <header className="pdf-word-preview-header">
+            <div>
+              <Eye size={18} />
+              <strong>Xem trước tài liệu Word</strong>
+            </div>
+            <span>{previewStatus === 'ready' ? 'Đã tải xong' : 'DOCX preview'}</span>
+          </header>
+
+          <div className="pdf-word-preview-viewport">
+            {previewStatus === 'loading' && (
+              <div className="pdf-word-preview-state">
+                <Loader2 size={28} className="pdf-word-preview-spinner" />
+                <span>Đang tạo bản xem trước...</span>
+              </div>
+            )}
+            {previewStatus === 'error' && (
+              <div className="pdf-word-preview-state pdf-word-preview-error">
+                <AlertCircle size={28} />
+                <strong>Không thể xem trước tài liệu</strong>
+                <span>{previewError}</span>
+                <small>Bạn vẫn có thể tải file Word bằng nút bên trái.</small>
+              </div>
+            )}
+            <div
+              ref={previewRef}
+              className={`docx-preview-wrapper pdf-word-preview-content${previewStatus === 'ready' ? ' is-ready' : ''}`}
+            />
+          </div>
+        </section>
       </div>
     </div>
   );
