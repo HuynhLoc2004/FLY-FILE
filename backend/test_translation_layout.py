@@ -22,10 +22,24 @@ class TranslationLayoutTests(unittest.TestCase):
         self.assertIn("BO CONG AN", html)
         self.assertIn("MAU SO 07/2026", html)
         self.assertIn("CONG HOA XA HOI CHU NGHIA VIET NAM", html)
-        # Two source columns receive equal flexible space, while a standalone
-        # right-side form number stays in the right half.
+        # Two source columns receive equal flexible space. A standalone line
+        # gets the full row so English cannot be squeezed by its source bbox.
         self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", html)
-        self.assertIn("width:50%;min-width:0;margin-left:auto", html)
+        self.assertIn("width:100%;min-width:0", html)
+
+    def test_each_native_pdf_line_becomes_one_translation_paragraph(self):
+        doc = fitz.open()
+        page = doc.new_page(width=600, height=800)
+        page.insert_textbox(
+            fitz.Rect(50, 100, 550, 180),
+            "Dong thu nhat\nDong thu hai\nDong thu ba",
+            fontsize=10,
+        )
+
+        html, _ = pdf_page_to_html(page, [])
+
+        self.assertEqual(html.count("<p style="), 3)
+        self.assertNotIn("<br/>", html)
 
 
 if __name__ == "__main__":

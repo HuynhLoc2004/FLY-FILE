@@ -214,6 +214,7 @@ def translate_html_page(html: str, api_key: str | None = None, is_scanned: bool 
 Translate the JSON array below as one document, using context across all items.
 Return ONLY a valid JSON array with exactly {len(source_segments)} strings in the same order.
 Do not merge, split, omit, duplicate, or reorder items. Preserve numbers and identifiers exactly.
+Each array item is exactly one source line or one table cell; its translation must remain in that item.
 Use natural, grammatically correct legal English. Personal names must be uppercase Latin without
 diacritics. Preserve punctuation belonging to each item. Do not output HTML or markdown.
 

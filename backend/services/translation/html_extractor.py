@@ -390,11 +390,12 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
             if _inside_preserved_asset(bbox, preserved_assets or []):
                 continue
 
-            lines_html: list[str] = []
-            max_size = 0.0
-
             for ln in blk["lines"]:
+                line_bbox = list(ln.get("bbox") or bbox)
+                if _inside_preserved_asset(line_bbox, preserved_assets or []):
+                    continue
                 span_parts: list[str] = []
+                max_size = 0.0
                 for sp in ln["spans"]:
                     t = sp["text"]
                     if not t:
@@ -419,19 +420,18 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
                     span_parts.append(f'<span style="{style}">{_escape(t)}</span>')
 
                 if span_parts:
-                    lines_html.append("".join(span_parts))
-
-            if not lines_html:
-                continue
-
-            x0, y0, x1, y1 = bbox
-            block_w = x1 - x0
-            is_large = max_size > TARGET_BODY * 1.2
-            align = _alignment(x0, block_w, page_w, is_large)
-
-            content = "<br/>".join(lines_html)
-            p_style = f"text-align:{align};margin:0;line-height:1.6;"
-            block_elements.append((y0, f'<p style="{p_style}">{content}</p>', y1, list(bbox)))
+                    x0, y0, x1, y1 = line_bbox
+                    line_w = x1 - x0
+                    is_large = max_size > TARGET_BODY * 1.2
+                    align = _alignment(x0, line_w, page_w, is_large)
+                    p_style = f"text-align:{align};margin:0;line-height:1.35;"
+                    content = "".join(span_parts)
+                    block_elements.append((
+                        y0,
+                        f'<p style="{p_style}">{content}</p>',
+                        y1,
+                        line_bbox,
+                    ))
 
     # ── 3. Merge tables + text, sort by y0 ───────────────────────────────────
     all_elems: list[tuple] = block_elements + table_elements
@@ -475,17 +475,13 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
         cells = []
         multiple_columns = len(row) > 1
         for _y0, elem_html, _y1, bbox in row:
-            x0, _top, x1, _bottom = bbox
-            center = (x0 + x1) / 2 / page_w
-            source_width = (x1 - x0) / page_w
             if multiple_columns:
                 cell_style = "min-width:0"
-            elif source_width >= 0.55 or 0.35 <= center <= 0.65:
-                cell_style = "width:100%;min-width:0"
-            elif center > 0.65:
-                cell_style = "width:50%;min-width:0;margin-left:auto"
             else:
-                cell_style = "width:50%;min-width:0;margin-right:auto"
+                # A single logical source line always receives the full row.
+                # Its original left/center/right alignment remains on <p>, but
+                # English is never squeezed into the narrow Vietnamese bbox.
+                cell_style = "width:100%;min-width:0"
             cells.append(
                 f'<div class="pdf-flow-block" style="{cell_style};overflow-wrap:break-word">'
                 f'{elem_html}</div>'
