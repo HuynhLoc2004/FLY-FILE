@@ -191,6 +191,8 @@ async def api_translate_pdf_html(
 
                 assets = p.get("preserved_assets", [])
                 if assets:
+                    from bs4 import BeautifulSoup
+
                     asset_tags = []
                     page_width = max(float(p.get("width") or 1), 1)
                     page_height = max(float(p.get("height") or 1), 1)
@@ -204,10 +206,18 @@ async def api_translate_pdf_html(
                             f'top:{y0/page_height*100:.3f}%;width:{(x1-x0)/page_width*100:.3f}%;'
                             'height:auto;z-index:2"/>'
                         )
-                    translated_html = (
-                        f'<div style="position:relative;min-height:240mm">{translated_html}'
-                        + "".join(asset_tags) + "</div>"
-                    )
+                    soup = BeautifulSoup(translated_html, "html.parser")
+                    layout_page = soup.select_one(".pdf-layout-page")
+                    if layout_page is not None:
+                        asset_fragment = BeautifulSoup("".join(asset_tags), "html.parser")
+                        for asset_node in list(asset_fragment.contents):
+                            layout_page.append(asset_node)
+                        translated_html = str(soup)
+                    else:
+                        translated_html = (
+                            f'<div style="position:relative;min-height:240mm">{translated_html}'
+                            + "".join(asset_tags) + "</div>"
+                        )
                 public_page = {key: value for key, value in p.items()
                                if key not in {"html", "image_b64", "preserved_assets"}}
                 return [{**public_page, "translated_html": translated_html,

@@ -315,7 +315,12 @@ def _ocr_page_to_elements(page: fitz.Page, page_w: float, preserved_assets: list
             parts.append(f'<span style="{style}">{_escape(text)}</span>')
 
         p_style = f"text-align:{align};margin:0;line-height:1.55;"
-        elements.append((row_y0, f'<p style="{p_style}">{"&nbsp;&nbsp;".join(parts)}</p>', row_y1))
+        elements.append((
+            row_y0,
+            f'<p style="{p_style}">{"&nbsp;&nbsp;".join(parts)}</p>',
+            row_y1,
+            [row_x0, row_y0, row_x1, row_y1],
+        ))
 
     return elements
 
@@ -337,7 +342,7 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
     for t in tables:
         grid = t.extract()
         t_html = _table_to_html(grid)
-        table_elements.append((t.bbox[1], t_html, t.bbox[3]))
+        table_elements.append((t.bbox[1], t_html, t.bbox[3], list(t.bbox)))
 
     # ── 2. Check if page has extractable text via dict mode ───────────────────
     # NOTE: get_text("text") fails for custom-encoded Vietnamese fonts.
@@ -426,27 +431,32 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
 
             content = "<br/>".join(lines_html)
             p_style = f"text-align:{align};margin:0;line-height:1.6;"
-            block_elements.append((y0, f'<p style="{p_style}">{content}</p>', y1))
+            block_elements.append((y0, f'<p style="{p_style}">{content}</p>', y1, list(bbox)))
 
     # ── 3. Merge tables + text, sort by y0 ───────────────────────────────────
     all_elems: list[tuple] = block_elements + table_elements
-    all_elems.sort(key=lambda e: e[0])
+    all_elems.sort(key=lambda e: (e[0], e[3][0]))
 
-    # ── 4. Assemble HTML with gap-based spacing ───────────────────────────────
+    # ── 4. Assemble an exact coordinate-based page ───────────────────────────
+    page_h = max(float(page.rect.height), 1.0)
     parts: list[str] = []
-    prev_y1 = 0.0
+    for _y0, elem_html, _y1, bbox in all_elems:
+        x0, y0, x1, y1 = bbox
+        left = max(0.0, x0 / page_w * 100)
+        top = max(0.0, y0 / page_h * 100)
+        width = max(0.5, (x1 - x0) / page_w * 100)
+        parts.append(
+            f'<div class="pdf-layout-block" style="position:absolute;left:{left:.4f}%;'
+            f'top:{top:.4f}%;width:{width:.4f}%;min-height:{max(y1-y0, 1):.2f}pt;'
+            'overflow:visible;overflow-wrap:anywhere">'
+            f'{elem_html}</div>'
+        )
 
-    for y0, elem_html, y1 in all_elems:
-        gap = max(0.0, y0 - prev_y1)
-        margin = _gap_to_margin(gap)
-        if margin > 0:
-            parts.append(
-                f'<div style="height:{margin}px;" aria-hidden="true"></div>'
-            )
-        parts.append(elem_html)
-        prev_y1 = y1
-
-    html_out = "\n".join(parts)
+    html_out = (
+        f'<div class="pdf-layout-page" style="position:relative;width:100%;'
+        f'height:{page_h:.2f}pt;--page-ratio:{page_w:.4f}/{page_h:.4f};overflow:hidden">'
+        + "\n".join(parts) + "</div>"
+    )
     return html_out, is_scanned
 
 

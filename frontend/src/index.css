@@ -2396,6 +2396,22 @@ a {
   -webkit-text-stroke: 0 transparent !important;
 }
 
+/* Coordinate-based PDF layout: remove editor padding and scale page height
+   from the source PDF ratio while retaining every block's original bbox. */
+.translated-page-content:has(.pdf-layout-page) {
+  padding: 0 !important;
+}
+
+.translated-page-content .pdf-layout-page {
+  height: auto !important;
+  aspect-ratio: var(--page-ratio);
+}
+
+.translated-page-content .pdf-layout-block p,
+.translated-page-content .pdf-layout-block table {
+  margin-block: 0;
+}
+
 /* Bottom pager */
 .translate-pager {
   display: flex;
