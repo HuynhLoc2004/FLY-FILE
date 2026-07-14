@@ -1,4 +1,9 @@
 import io
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
 import fitz  # PyMuPDF
 
 MB = 1024 * 1024
@@ -70,71 +75,94 @@ def _render_pdf_as_image_pdf(file_bytes: bytes, *, zoom: float, quality: int) ->
         src.close()
 
 
-def _pick_target_profile(
-    file_bytes: bytes,
-    *,
-    target_bytes: int,
-    min_bytes: int,
-    max_bytes: int,
-    candidates: list[tuple[int, int, int]],
-    fallback_bytes: bytes,
-) -> bytes:
-    original_size = len(file_bytes)
-    best_in_window = None
-    best_above_target = None
-    best_above_distance = None
-    best_below_target = None
-    best_below_distance = None
-    smallest_reduction = None
+def _find_ghostscript_command() -> str | None:
+    for name in ("gswin64c", "gswin32c", "gs"):
+        command = shutil.which(name)
+        if command:
+            return command
+    return None
 
-    for dpi_threshold, dpi_target, quality in candidates:
-        compressed = _compress_native_pdf(
-            file_bytes,
-            dpi_threshold=dpi_threshold,
-            dpi_target=dpi_target,
-            quality=quality,
-        )
-        compressed_size = len(compressed)
-        if compressed_size == 0 or compressed_size >= original_size:
-            continue
 
-        if smallest_reduction is None or compressed_size < len(smallest_reduction):
-            smallest_reduction = compressed
+def _compress_with_ghostscript(file_bytes: bytes, *, image_dpi: int, jpeg_quality: int) -> bytes | None:
+    command = _find_ghostscript_command()
+    if not command:
+        return None
 
-        if min_bytes <= compressed_size <= max_bytes:
-            best_in_window = compressed
-            break
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_path = Path(temp_dir) / "input.pdf"
+        output_path = Path(temp_dir) / "output.pdf"
+        input_path.write_bytes(file_bytes)
 
-        if compressed_size > target_bytes:
-            distance = compressed_size - target_bytes
-            if best_above_target is None or distance < best_above_distance:
-                best_above_target = compressed
-                best_above_distance = distance
-        else:
-            distance = target_bytes - compressed_size
-            if best_below_target is None or distance < best_below_distance:
-                best_below_target = compressed
-                best_below_distance = distance
+        cmd = [
+            command,
+            "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            "-dNOPAUSE",
+            "-dBATCH",
+            "-dSAFER",
+            "-dAutoRotatePages=/None",
+            "-dDetectDuplicateImages=true",
+            "-dCompressFonts=true",
+            "-dSubsetFonts=true",
+            "-dColorImageDownsampleType=/Bicubic",
+            f"-dColorImageResolution={image_dpi}",
+            "-dGrayImageDownsampleType=/Bicubic",
+            f"-dGrayImageResolution={image_dpi}",
+            "-dMonoImageDownsampleType=/Subsample",
+            f"-dMonoImageResolution={max(200, image_dpi)}",
+            "-dColorImageFilter=/DCTEncode",
+            "-dGrayImageFilter=/DCTEncode",
+            f"-dJPEGQ={jpeg_quality}",
+            f"-sOutputFile={output_path}",
+            str(input_path),
+        ]
 
-    if best_in_window is not None:
-        return best_in_window
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            return None
 
-    if best_above_target is not None:
-        return best_above_target
-
-    if best_below_target is not None and len(best_below_target) >= min_bytes:
-        return best_below_target
-
-    if smallest_reduction is not None:
-        return smallest_reduction
-
-    return fallback_bytes
+        if not output_path.exists():
+            return None
+        return output_path.read_bytes()
 
 
 def _pick_smallest_result(original_size: int, results: list[bytes], fallback_bytes: bytes) -> bytes:
     valid = [blob for blob in results if blob and len(blob) < original_size]
     if not valid:
         return fallback_bytes
+    return min(valid, key=len)
+
+
+def _pick_best_result(
+    original_size: int,
+    target_bytes: int,
+    min_bytes: int,
+    max_bytes: int,
+    results: list[bytes],
+    fallback_bytes: bytes,
+) -> bytes:
+    valid = [blob for blob in results if blob and len(blob) < original_size]
+    if not valid:
+        return fallback_bytes
+
+    in_window = [blob for blob in valid if min_bytes <= len(blob) <= max_bytes]
+    if in_window:
+        return min(in_window, key=lambda blob: abs(len(blob) - target_bytes))
+
+    above_target = [blob for blob in valid if len(blob) > target_bytes]
+    if above_target:
+        return min(above_target, key=lambda blob: len(blob) - target_bytes)
+
+    below_target = [blob for blob in valid if len(blob) <= target_bytes]
+    if below_target:
+        return min(below_target, key=lambda blob: target_bytes - len(blob))
+
     return min(valid, key=len)
 
 
@@ -197,24 +225,34 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 (240, 190, 80),
             ]
 
-            native_result = _pick_target_profile(
-                file_bytes,
-                target_bytes=ultra_target,
-                min_bytes=ultra_min,
-                max_bytes=ultra_max,
-                candidates=native_candidates,
-                fallback_bytes=base_optimized,
-            )
-            if len(native_result) <= ultra_max and len(native_result) < original_size:
-                return native_result
-
+            native_results = [
+                _compress_native_pdf(
+                    file_bytes,
+                    dpi_threshold=dpi_threshold,
+                    dpi_target=dpi_target,
+                    quality=quality,
+                )
+                for dpi_threshold, dpi_target, quality in native_candidates
+            ]
+            ghostscript_results = [
+                _compress_with_ghostscript(file_bytes, image_dpi=180, jpeg_quality=86),
+                _compress_with_ghostscript(file_bytes, image_dpi=160, jpeg_quality=82),
+                _compress_with_ghostscript(file_bytes, image_dpi=145, jpeg_quality=78),
+            ]
             raster_results = [
                 _render_pdf_as_image_pdf(file_bytes, zoom=1.9, quality=88),
                 _render_pdf_as_image_pdf(file_bytes, zoom=1.7, quality=84),
                 _render_pdf_as_image_pdf(file_bytes, zoom=1.55, quality=80),
                 _render_pdf_as_image_pdf(file_bytes, zoom=1.4, quality=76),
             ]
-            return _pick_smallest_result(original_size, raster_results, native_result)
+            return _pick_best_result(
+                original_size,
+                ultra_target,
+                ultra_min,
+                ultra_max,
+                [base_optimized, *native_results, *ghostscript_results, *raster_results],
+                base_optimized,
+            )
 
         if level == "extreme":
             if extreme_min <= len(base_optimized) <= extreme_max and len(base_optimized) < original_size:
@@ -229,24 +267,34 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
                 (320, 225, 84),
                 (300, 210, 82),
             ]
-            native_result = _pick_target_profile(
-                file_bytes,
-                target_bytes=extreme_target,
-                min_bytes=extreme_min,
-                max_bytes=extreme_max,
-                candidates=native_candidates,
-                fallback_bytes=base_optimized,
-            )
-            if len(native_result) <= extreme_max and len(native_result) < original_size:
-                return native_result
-
+            native_results = [
+                _compress_native_pdf(
+                    file_bytes,
+                    dpi_threshold=dpi_threshold,
+                    dpi_target=dpi_target,
+                    quality=quality,
+                )
+                for dpi_threshold, dpi_target, quality in native_candidates
+            ]
+            ghostscript_results = [
+                _compress_with_ghostscript(file_bytes, image_dpi=220, jpeg_quality=90),
+                _compress_with_ghostscript(file_bytes, image_dpi=200, jpeg_quality=86),
+                _compress_with_ghostscript(file_bytes, image_dpi=180, jpeg_quality=82),
+            ]
             raster_results = [
                 _render_pdf_as_image_pdf(file_bytes, zoom=2.2, quality=92),
                 _render_pdf_as_image_pdf(file_bytes, zoom=2.0, quality=88),
                 _render_pdf_as_image_pdf(file_bytes, zoom=1.8, quality=84),
                 _render_pdf_as_image_pdf(file_bytes, zoom=1.65, quality=80),
             ]
-            return _pick_smallest_result(original_size, raster_results, native_result)
+            return _pick_best_result(
+                original_size,
+                extreme_target,
+                extreme_min,
+                extreme_max,
+                [base_optimized, *native_results, *ghostscript_results, *raster_results],
+                base_optimized,
+            )
 
         if len(base_optimized) < original_size and medium_min <= len(base_optimized) <= medium_max:
             return base_optimized
@@ -262,22 +310,32 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             (400, 300, 92),
             (380, 285, 91),
         ]
-        native_result = _pick_target_profile(
-            file_bytes,
-            target_bytes=medium_target,
-            min_bytes=medium_min,
-            max_bytes=medium_max,
-            candidates=native_candidates,
-            fallback_bytes=base_optimized,
-        )
-        if len(native_result) < original_size and len(native_result) <= medium_max:
-            return native_result
-
+        native_results = [
+            _compress_native_pdf(
+                file_bytes,
+                dpi_threshold=dpi_threshold,
+                dpi_target=dpi_target,
+                quality=quality,
+            )
+            for dpi_threshold, dpi_target, quality in native_candidates
+        ]
+        ghostscript_results = [
+            _compress_with_ghostscript(file_bytes, image_dpi=260, jpeg_quality=92),
+            _compress_with_ghostscript(file_bytes, image_dpi=240, jpeg_quality=90),
+            _compress_with_ghostscript(file_bytes, image_dpi=220, jpeg_quality=88),
+        ]
         raster_results = [
             _render_pdf_as_image_pdf(file_bytes, zoom=2.5, quality=95),
             _render_pdf_as_image_pdf(file_bytes, zoom=2.3, quality=93),
             _render_pdf_as_image_pdf(file_bytes, zoom=2.1, quality=91),
         ]
-        return _pick_smallest_result(original_size, raster_results, native_result)
+        return _pick_best_result(
+            original_size,
+            medium_target,
+            medium_min,
+            medium_max,
+            [base_optimized, *native_results, *ghostscript_results, *raster_results],
+            base_optimized,
+        )
     finally:
         doc.close()
