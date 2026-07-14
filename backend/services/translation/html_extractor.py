@@ -437,26 +437,59 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
     all_elems: list[tuple] = block_elements + table_elements
     all_elems.sort(key=lambda e: (e[0], e[3][0]))
 
-    # ── 4. Assemble an exact coordinate-based page ───────────────────────────
-    page_h = max(float(page.rect.height), 1.0)
-    parts: list[str] = []
-    for _y0, elem_html, _y1, bbox in all_elems:
-        x0, y0, x1, y1 = bbox
-        left = max(0.0, x0 / page_w * 100)
-        top = max(0.0, y0 / page_h * 100)
-        width = max(0.5, (x1 - x0) / page_w * 100)
-        parts.append(
-            f'<div class="pdf-layout-block" style="position:absolute;left:{left:.4f}%;'
-            f'top:{top:.4f}%;width:{width:.4f}%;min-height:{max(y1-y0, 1):.2f}pt;'
-            'overflow:visible;overflow-wrap:anywhere">'
-            f'{elem_html}</div>'
-        )
+    # ── 4. Assemble responsive source rows ────────────────────────────────────
+    # Blocks sharing a visual line stay left/right in one CSS grid row. Rows
+    # remain in normal flow, so longer English expands the row and pushes all
+    # later content down instead of overlapping it.
+    rows: list[list[tuple]] = []
+    for element in all_elems:
+        bbox = element[3]
+        if rows:
+            current = rows[-1]
+            row_y0 = min(item[3][1] for item in current)
+            row_y1 = max(item[3][3] for item in current)
+            elem_h = max(bbox[3] - bbox[1], 1)
+            row_h = max(row_y1 - row_y0, 1)
+            vertical_overlap = max(0.0, min(row_y1, bbox[3]) - max(row_y0, bbox[1]))
+            same_band = (
+                abs(bbox[1] - row_y0) <= 7
+                or vertical_overlap >= min(elem_h, row_h) * 0.55
+            )
+            horizontal_collision = any(
+                min(bbox[2], item[3][2]) - max(bbox[0], item[3][0]) > 2
+                for item in current
+            )
+            if same_band and not horizontal_collision:
+                current.append(element)
+                continue
+        rows.append([element])
 
-    html_out = (
-        f'<div class="pdf-layout-page" style="position:relative;width:100%;'
-        f'height:{page_h:.2f}pt;--page-ratio:{page_w:.4f}/{page_h:.4f};overflow:hidden">'
-        + "\n".join(parts) + "</div>"
-    )
+    row_parts: list[str] = []
+    previous_source_y1 = 0.0
+    for row in rows:
+        row.sort(key=lambda item: item[3][0])
+        row_y0 = min(item[3][1] for item in row)
+        row_y1 = max(item[3][3] for item in row)
+        source_gap = max(0.0, row_y0 - previous_source_y1)
+        margin_top = min(source_gap, 30.0)
+        cells = []
+        for _y0, elem_html, _y1, bbox in row:
+            x0, _top, x1, _bottom = bbox
+            column_start = max(1, min(100, int(x0 / page_w * 100) + 1))
+            column_end = max(column_start + 1, min(101, int((x1 / page_w * 100) + 0.999) + 1))
+            cells.append(
+                f'<div class="pdf-flow-block" style="grid-column:{column_start}/{column_end};'
+                'min-width:0;overflow-wrap:anywhere">'
+                f'{elem_html}</div>'
+            )
+        row_parts.append(
+            f'<div class="pdf-flow-row" style="display:grid;grid-template-columns:repeat(100,minmax(0,1fr));'
+            f'align-items:start;width:100%;margin-top:{margin_top:.2f}pt">'
+            + "".join(cells) + "</div>"
+        )
+        previous_source_y1 = max(previous_source_y1, row_y1)
+
+    html_out = '<div class="pdf-flow-page" style="width:100%;overflow:visible">' + "\n".join(row_parts) + "</div>"
     return html_out, is_scanned
 
 

@@ -15,15 +15,16 @@ class TranslationLayoutTests(unittest.TestCase):
 
         html, _ = pdf_page_to_html(page, [])
 
-        self.assertIn('class="pdf-layout-page"', html)
-        self.assertIn('class="pdf-layout-block"', html)
-        self.assertIn("position:absolute", html)
+        self.assertIn('class="pdf-flow-page"', html)
+        self.assertIn('class="pdf-flow-row"', html)
+        self.assertIn('class="pdf-flow-block"', html)
+        self.assertNotIn("position:absolute", html)
         self.assertIn("BO CONG AN", html)
         self.assertIn("MAU SO 07/2026", html)
         self.assertIn("CONG HOA XA HOI CHU NGHIA VIET NAM", html)
-        # The right-side blocks must retain a left position near 60%+, rather
-        # than being reflowed below the left header.
-        self.assertRegex(html, r"left:6[0-9]\.\d+%")
+        # The right-side blocks retain a grid column near 60%+, but rows stay
+        # in normal flow so translated text cannot overlap later content.
+        self.assertRegex(html, r"grid-column:6[0-9]/")
 
 
 if __name__ == "__main__":

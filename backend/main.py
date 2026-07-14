@@ -195,23 +195,28 @@ async def api_translate_pdf_html(
 
                     asset_tags = []
                     page_width = max(float(p.get("width") or 1), 1)
-                    page_height = max(float(p.get("height") or 1), 1)
+                    max_asset_height = 1.0
                     for asset in assets:
                         x0, y0, x1, y1 = asset["bbox"]
+                        max_asset_height = max(max_asset_height, y1 - y0)
                         asset_tags.append(
                             f'<img src="{asset["data_uri"]}" '
                             f'alt="{"QR Code" if asset.get("kind") == "qr" else "Original stamp or signature"}" '
                             'data-preserved-asset="true" '
                             f'style="position:absolute;left:{x0/page_width*100:.3f}%;'
-                            f'top:{y0/page_height*100:.3f}%;width:{(x1-x0)/page_width*100:.3f}%;'
+                            f'top:0;width:{(x1-x0)/page_width*100:.3f}%;'
                             'height:auto;z-index:2"/>'
                         )
                     soup = BeautifulSoup(translated_html, "html.parser")
-                    layout_page = soup.select_one(".pdf-layout-page")
-                    if layout_page is not None:
-                        asset_fragment = BeautifulSoup("".join(asset_tags), "html.parser")
-                        for asset_node in list(asset_fragment.contents):
-                            layout_page.append(asset_node)
+                    flow_page = soup.select_one(".pdf-flow-page")
+                    if flow_page is not None:
+                        asset_row = BeautifulSoup(
+                            f'<div class="preserved-assets-row" style="position:relative;width:100%;'
+                            f'height:{max_asset_height:.2f}pt;margin-top:8pt">'
+                            + "".join(asset_tags) + "</div>",
+                            "html.parser",
+                        )
+                        flow_page.append(asset_row.div)
                         translated_html = str(soup)
                     else:
                         translated_html = (

@@ -2396,19 +2396,14 @@ a {
   -webkit-text-stroke: 0 transparent !important;
 }
 
-/* Coordinate-based PDF layout: remove editor padding and scale page height
-   from the source PDF ratio while retaining every block's original bbox. */
-.translated-page-content:has(.pdf-layout-page) {
-  padding: 0 !important;
+/* Responsive source rows preserve left/right form structure while allowing
+   longer English text to increase row height without overlapping later rows. */
+.translated-page-content:has(.pdf-flow-page) {
+  padding: 16px 20px !important;
 }
 
-.translated-page-content .pdf-layout-page {
-  height: auto !important;
-  aspect-ratio: var(--page-ratio);
-}
-
-.translated-page-content .pdf-layout-block p,
-.translated-page-content .pdf-layout-block table {
+.translated-page-content .pdf-flow-block p,
+.translated-page-content .pdf-flow-block table {
   margin-block: 0;
 }
 
