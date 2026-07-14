@@ -473,17 +473,29 @@ def pdf_page_to_html(page: fitz.Page, preserved_assets: list[dict] | None = None
         source_gap = max(0.0, row_y0 - previous_source_y1)
         margin_top = min(source_gap, 30.0)
         cells = []
+        multiple_columns = len(row) > 1
         for _y0, elem_html, _y1, bbox in row:
             x0, _top, x1, _bottom = bbox
-            column_start = max(1, min(100, int(x0 / page_w * 100) + 1))
-            column_end = max(column_start + 1, min(101, int((x1 / page_w * 100) + 0.999) + 1))
+            center = (x0 + x1) / 2 / page_w
+            source_width = (x1 - x0) / page_w
+            if multiple_columns:
+                cell_style = "min-width:0"
+            elif source_width >= 0.55 or 0.35 <= center <= 0.65:
+                cell_style = "width:100%;min-width:0"
+            elif center > 0.65:
+                cell_style = "width:50%;min-width:0;margin-left:auto"
+            else:
+                cell_style = "width:50%;min-width:0;margin-right:auto"
             cells.append(
-                f'<div class="pdf-flow-block" style="grid-column:{column_start}/{column_end};'
-                'min-width:0;overflow-wrap:anywhere">'
+                f'<div class="pdf-flow-block" style="{cell_style};overflow-wrap:break-word">'
                 f'{elem_html}</div>'
             )
+        row_layout = (
+            f'display:grid;grid-template-columns:repeat({len(row)},minmax(0,1fr));column-gap:18pt;'
+            if multiple_columns else "display:block;"
+        )
         row_parts.append(
-            f'<div class="pdf-flow-row" style="display:grid;grid-template-columns:repeat(100,minmax(0,1fr));'
+            f'<div class="pdf-flow-row" style="{row_layout}'
             f'align-items:start;width:100%;margin-top:{margin_top:.2f}pt">'
             + "".join(cells) + "</div>"
         )

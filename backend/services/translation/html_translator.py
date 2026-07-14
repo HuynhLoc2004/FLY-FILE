@@ -9,8 +9,8 @@ import json
 logger = logging.getLogger(__name__)
 
 DEFAULT_GEMINI_MODELS = (
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
 )
 
 
@@ -192,15 +192,21 @@ def translate_html_page(html: str, api_key: str | None = None, is_scanned: bool 
     from bs4 import BeautifulSoup, NavigableString
 
     soup = BeautifulSoup(html, "html.parser")
-    text_nodes = [
-        node for node in soup.find_all(string=True)
-        if isinstance(node, NavigableString)
-        and node.strip()
-        and node.parent
-        and node.parent.name not in {"style", "script"}
-        and not node.find_parent(attrs={"aria-hidden": "true"})
+
+    # PDF generators frequently split a single word across multiple spans.
+    # Translate logical paragraphs/cells, never raw text nodes, otherwise words
+    # such as "CERTIFIES" can become separate "CERTIFI" + "ES" translations.
+    targets = list(soup.select(".pdf-flow-block p, .pdf-flow-block td, .pdf-flow-block th"))
+    if not targets:
+        targets = list(soup.find_all(["p", "td", "th"]))
+    targets = [target for target in targets if not target.find(["p", "td", "th"])]
+    source_segments = [
+        re.sub(r"\s+", " ", target.get_text("", strip=False).replace("\xa0", " ")).strip()
+        for target in targets
     ]
-    source_segments = [str(node) for node in text_nodes]
+    non_empty = [(target, segment) for target, segment in zip(targets, source_segments) if segment]
+    targets = [item[0] for item in non_empty]
+    source_segments = [item[1] for item in non_empty]
     if not source_segments:
         return html
 
@@ -222,13 +228,25 @@ SOURCE SEGMENTS:
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.I)
             cleaned = re.sub(r"\s*```$", "", cleaned).strip()
             translated = json.loads(cleaned)
-            if not isinstance(translated, list) or len(translated) != len(text_nodes):
+            if not isinstance(translated, list) or len(translated) != len(targets):
                 raise ValueError("Gemini returned a different number of text segments")
             if not all(isinstance(item, str) for item in translated):
                 raise ValueError("Gemini returned non-text translation segments")
 
-            for node, translated_text in zip(text_nodes, translated):
-                node.replace_with(translated_text)
+            for target, translated_text in zip(targets, translated):
+                # Preserve the container and its source formatting. Use the
+                # first formatted span as the run style after joining PDF-split
+                # fragments back into one grammatically complete translation.
+                styled_run = target.find("span", style=True)
+                run_style = styled_run.get("style", "") if styled_run else ""
+                target.clear()
+                if run_style:
+                    translated_run = soup.new_tag("span")
+                    translated_run["style"] = run_style
+                    translated_run.string = translated_text
+                    target.append(translated_run)
+                else:
+                    target.append(NavigableString(translated_text))
             return sanitize_translated_html("".join(str(node) for node in soup.contents))
         except Exception as exc:
             last_error = exc

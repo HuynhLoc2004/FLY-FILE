@@ -31,7 +31,7 @@ Tạo `backend/.env` nếu cần:
 
 ```env
 GEMINI_API_KEY=your_key_here
-GEMINI_MODELS=gemini-2.5-flash,gemini-2.5-flash-lite
+GEMINI_MODELS=gemini-2.5-pro,gemini-2.5-flash
 DEEPL_API_KEY=your_key_here
 ```
 

@@ -73,6 +73,25 @@ class HtmlTranslatorConfigurationTests(unittest.TestCase):
         self.assertIn("SOCIALIST REPUBLIC OF VIETNAM", translated)
         self.assertNotIn("CỘNG HÒA", translated)
 
+    @patch(
+        "services.translation.html_translator._call_gemini",
+        return_value='["CERTIFIES:"]',
+    )
+    def test_pdf_split_spans_are_joined_before_translation(self, call_gemini):
+        source = (
+            '<div class="pdf-flow-block"><p style="text-align:center">'
+            '<span style="font-family:Arial;font-weight:bold">XÁC NH</span>'
+            '<span style="font-family:Arial;font-weight:bold">ẬN:</span>'
+            '</p></div>'
+        )
+
+        translated = translate_html_page(source, api_key="test-key")
+
+        prompt = call_gemini.call_args.args[2]
+        self.assertIn("XÁC NHẬN:", prompt)
+        self.assertIn("CERTIFIES:", translated)
+        self.assertNotIn("CERTIFI</span>", translated)
+
 
 if __name__ == "__main__":
     unittest.main()
