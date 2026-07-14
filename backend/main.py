@@ -283,13 +283,7 @@ async def api_translate_pdf_download_pdf(request: DownloadEditedRequest):
   @page {{
     size: A4;
     margin: 18mm 20mm 18mm 22mm;
-    @bottom-right {{
-      content: counter(page);
-      font-family: 'Times New Roman', Times, serif;
-      font-size: 10pt;
-    }}
   }}
-  @page :first {{ @bottom-right {{ content: ""; }} }}
   body {{
     font-family: 'Times New Roman', Times, serif;
     font-size: 10pt;

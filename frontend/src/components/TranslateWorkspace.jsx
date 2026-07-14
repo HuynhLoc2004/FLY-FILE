@@ -58,7 +58,7 @@ const HtmlTranslatedPage = ({ html, pageNum, onHtmlEdit, registerPageRef }) => (
       className="translated-page-content translated-page-content-editable"
       contentEditable={true}
       suppressContentEditableWarning={true}
-      style={{ fontFamily: '"Times New Roman", Times, serif', color: '#1a202c' }}
+      style={{ color: '#1a202c' }}
       onBlur={(e) => onHtmlEdit(pageNum, e.currentTarget.innerHTML)}
       dangerouslySetInnerHTML={{ __html: html }}
     />

@@ -45,17 +45,27 @@ Read this Vietnamese PDF and output an HTML fragment that:
 2. Reproduces the EXACT same visual layout and structure as the original document
 3. Uses inline CSS for all styling
 
+Formatting fidelity rules (mandatory):
+- Preserve the original font family, font size, font weight, font style, text decoration,
+  alignment, line spacing, and capitalization of every text run
+- Bold text stays bold, italic text stays italic, and regular text stays regular
+- NEVER make a label, value, heading, or sentence bold/italic unless it is visibly so in the source
+- Put the detected dominant font-family on the outermost element and preserve any local font changes
+- Do not add text-shadow, box-shadow, filters, outlines, strokes, glow, opacity effects,
+  duplicated text, overlaid copies, or decorative effects to any text
+- Render every source text item exactly once; do not invent, repeat, or visually layer text
+
 Layout rules:
 - Keep the same number of columns, same table structure, same field arrangement as the original
 - Borderless layout tables (headers, 2-col fields, signatures): use <table style="width:100%;border-collapse:collapse;table-layout:fixed"> with <td style="border:none;word-wrap:break-word">
 - Data tables with visible lines (grade tables, tax detail tables): use <table style="width:100%;border-collapse:collapse;table-layout:fixed"> with <td style="border:1px solid #666;padding:2px 4px;word-wrap:break-word">
-- Document title (e.g. BIRTH CERTIFICATE, STATE BUDGET PAYMENT SLIP): always as a standalone <p style="text-align:center;font-size:13pt;font-weight:bold;margin:8px 0"> — NOT inside a table cell
-- "SOCIALIST REPUBLIC OF VIETNAM": font-size:10pt; font-weight:bold; text-align:center
-- "Independence - Freedom - Happiness": font-size:9pt; font-style:italic; text-align:center
-- Default text: font-size:9pt; line-height:1.5
-- Labels bold, values normal
+- Keep titles in their original structural position; do not move text into or out of table cells
+- Do not impose a default font size or style: copy it from the source
 
 Translation rules:
+- Use natural, grammatically correct, professional legal English suitable for consular submission
+- Preserve the complete meaning, tone, tense, negation, numbers, identifiers, and legal relationships
+- Translate by meaning and context, not word-for-word; do not add or omit facts
 - Personal names → UPPERCASE Latin no diacritics (NGUYEN VAN AN)
 - "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM" → "SOCIALIST REPUBLIC OF VIETNAM"
 - "Độc lập - Tự do - Hạnh phúc" → "Independence - Freedom - Happiness"
@@ -68,8 +78,45 @@ Translation rules:
 
 Ignore circular stamps/seals — do not include their text.
 
+Before returning, silently proofread the entire translation for English grammar, terminology,
+consistency, missing content, duplicated content, and formatting fidelity. Correct every issue found.
+
 Return ONLY the HTML fragment. No markdown, no explanation.
 """
+
+
+_FORBIDDEN_TEXT_EFFECTS = {
+    "text-shadow",
+    "text-stroke",
+    "text-stroke-color",
+    "text-stroke-width",
+    "-webkit-text-stroke",
+    "-webkit-text-stroke-color",
+    "-webkit-text-stroke-width",
+    "filter",
+}
+
+
+def sanitize_translated_html(html: str) -> str:
+    """Remove generated text effects without changing font or emphasis styles."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html, "html.parser")
+    for element in soup.find_all(style=True):
+        safe_declarations = []
+        for declaration in element.get("style", "").split(";"):
+            declaration = declaration.strip()
+            if not declaration:
+                continue
+            property_name, separator, _ = declaration.partition(":")
+            if separator and property_name.strip().lower() in _FORBIDDEN_TEXT_EFFECTS:
+                continue
+            safe_declarations.append(declaration)
+        if safe_declarations:
+            element["style"] = ";".join(safe_declarations)
+        else:
+            element.attrs.pop("style", None)
+    return "".join(str(node) for node in soup.contents)
 
 
 def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
@@ -113,6 +160,7 @@ def translate_pdf_page_to_html(pdf_b64: str, api_key: str | None = None) -> str:
             result = re.sub(r"^```[a-z]*\s*", "", raw)
             result = re.sub(r"\s*```$", "", result).strip()
             if result and len(result) > 30:
+                result = sanitize_translated_html(result)
                 logger.info(f"PDF translation succeeded: {model}")
                 return result
             last_error = RuntimeError("Gemini returned an empty or incomplete response")

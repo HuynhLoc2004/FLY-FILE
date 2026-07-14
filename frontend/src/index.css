@@ -2390,6 +2390,12 @@ a {
   color: #1a202c !important;
 }
 
+.translated-page-content,
+.translated-page-content * {
+  text-shadow: none !important;
+  -webkit-text-stroke: 0 transparent !important;
+}
+
 /* Bottom pager */
 .translate-pager {
   display: flex;
