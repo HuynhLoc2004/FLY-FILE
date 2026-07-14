@@ -227,15 +227,47 @@ class DownloadEditedRequest(BaseModel):
     result: dict
 
 
+def _html_to_pdf_bytes(html: str) -> bytes:
+    """Render HTML to PDF, with a portable fallback for missing native libs."""
+    import sys
+
+    weasyprint_error = None
+    if sys.platform != "win32":
+        try:
+            from weasyprint import HTML as WeasyHTML
+            return WeasyHTML(string=html, base_url=os.path.dirname(__file__)).write_pdf()
+        except Exception as exc:
+            weasyprint_error = exc
+            logger.warning("WeasyPrint unavailable; falling back to xhtml2pdf: %s", exc)
+
+    try:
+        from xhtml2pdf import pisa
+
+        output = io.BytesIO()
+        status = pisa.CreatePDF(src=html, dest=output, encoding="utf-8")
+        if status.err:
+            raise RuntimeError(f"xhtml2pdf reported {status.err} rendering error(s)")
+        pdf_bytes = output.getvalue()
+        if not pdf_bytes.startswith(b"%PDF"):
+            raise RuntimeError("PDF renderer returned invalid data")
+        return pdf_bytes
+    except Exception as exc:
+        if weasyprint_error is not None:
+            raise RuntimeError(
+                f"Không thể tạo PDF (WeasyPrint: {weasyprint_error}; xhtml2pdf: {exc})"
+            ) from exc
+        raise RuntimeError(f"Không thể tạo PDF: {exc}") from exc
+
+
 @app.post("/api/translate-pdf/download-pdf")
 async def api_translate_pdf_download_pdf(request: DownloadEditedRequest):
-    """Convert translated HTML pages to PDF using WeasyPrint (A4, proper fonts)."""
+    """Convert translated HTML pages to a downloadable A4 PDF."""
     try:
-        from weasyprint import HTML as WeasyHTML, CSS
-        import tempfile, os
-
         result = request.result
         pages = result.get("pages", [])
+
+        if not pages:
+            raise HTTPException(status_code=400, detail="Bản dịch không có trang để tạo PDF.")
 
         page_divs = []
         for page in pages:
@@ -293,14 +325,7 @@ async def api_translate_pdf_download_pdf(request: DownloadEditedRequest):
 <body>{pages_content}</body>
 </html>""".format(pages_content="".join(page_divs))
 
-        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as tmp_html:
-            tmp_html.write(full_html)
-            tmp_html_path = tmp_html.name
-
-        try:
-            pdf_bytes = WeasyHTML(filename=tmp_html_path).write_pdf()
-        finally:
-            os.unlink(tmp_html_path)
+        pdf_bytes = await run_in_threadpool(_html_to_pdf_bytes, full_html)
 
         base_name = (result.get("original_filename") or "document").rsplit(".", 1)[0]
         out_filename = f"{base_name}_translated.pdf"

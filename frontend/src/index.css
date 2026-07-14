@@ -2374,6 +2374,22 @@ a {
   color: #1a202c;
 }
 
+/* The translated document is a paper preview, not part of the dark app chrome. */
+.translated-page-content,
+.translated-page-content-editable {
+  background: #fff !important;
+  color: #1a202c !important;
+  color-scheme: light;
+  backdrop-filter: none !important;
+  caret-color: #1a202c;
+}
+
+.translated-page-content .translated-block,
+.translated-page-content .translated-heading,
+.translated-page-content .translated-para {
+  color: #1a202c !important;
+}
+
 /* Bottom pager */
 .translate-pager {
   display: flex;

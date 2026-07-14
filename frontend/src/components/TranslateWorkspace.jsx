@@ -355,12 +355,17 @@ const TranslateWorkspace = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ result: mergedResult }),
       });
-      if (!res.ok) throw new Error('Không thể tạo file PDF');
+      if (!res.ok) {
+        const responseError = await res.json().catch(() => null);
+        throw new Error(responseError?.detail || 'Không thể tạo file PDF');
+      }
       const blob = await res.blob();
       const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
+      const downloadUrl = URL.createObjectURL(blob);
+      a.href = downloadUrl;
       a.download = (result.original_filename?.replace(/\.pdf$/i, '') || 'translation') + '_translated.pdf';
       a.click();
+      URL.revokeObjectURL(downloadUrl);
     } catch (err) {
       alert(err.message);
     }
