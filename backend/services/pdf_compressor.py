@@ -25,7 +25,7 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     for page in doc:
         # Render page to image at desired resolution
         matrix = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=matrix)
+        pix = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
         
         # Save as compressed JPEG bytes
         img_bytes = pix.tobytes("jpeg", jpg_quality=quality)
