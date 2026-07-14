@@ -56,12 +56,22 @@ def _compress_native_pdf(
         doc.close()
 
 
-def _pick_target_profile(file_bytes: bytes, target_bytes: int, min_bytes: int, max_bytes: int, candidates: list[tuple[int, int, int]], fallback_bytes: bytes) -> bytes:
+def _pick_target_profile(
+    file_bytes: bytes,
+    *,
+    target_bytes: int,
+    min_bytes: int,
+    max_bytes: int,
+    candidates: list[tuple[int, int, int]],
+    fallback_bytes: bytes,
+) -> bytes:
+    original_size = len(file_bytes)
     best_in_window = None
     best_above_target = None
     best_above_distance = None
     best_below_target = None
     best_below_distance = None
+    smallest_reduction = None
 
     for dpi_threshold, dpi_target, quality in candidates:
         compressed = _compress_native_pdf(
@@ -71,8 +81,11 @@ def _pick_target_profile(file_bytes: bytes, target_bytes: int, min_bytes: int, m
             quality=quality,
         )
         compressed_size = len(compressed)
-        if compressed_size == 0:
+        if compressed_size == 0 or compressed_size >= original_size:
             continue
+
+        if smallest_reduction is None or compressed_size < len(smallest_reduction):
+            smallest_reduction = compressed
 
         if min_bytes <= compressed_size <= max_bytes:
             best_in_window = compressed
@@ -98,6 +111,9 @@ def _pick_target_profile(file_bytes: bytes, target_bytes: int, min_bytes: int, m
     if best_below_target is not None and len(best_below_target) >= min_bytes:
         return best_below_target
 
+    if smallest_reduction is not None:
+        return smallest_reduction
+
     return fallback_bytes
 
 
@@ -112,9 +128,13 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
     doc = fitz.open(stream=file_bytes, filetype="pdf")
     try:
         base_optimized = _save_pdf_optimized(doc)
+        original_size = len(file_bytes)
+
+        if len(base_optimized) >= original_size:
+            base_optimized = file_bytes
 
         if level == "ultra":
-            if ULTRA_MIN_BYTES <= len(base_optimized) <= ULTRA_MAX_BYTES:
+            if ULTRA_MIN_BYTES <= len(base_optimized) <= ULTRA_MAX_BYTES and len(base_optimized) < original_size:
                 return base_optimized
 
             candidates = [
@@ -129,15 +149,15 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
 
             return _pick_target_profile(
                 file_bytes,
-                ULTRA_TARGET_BYTES,
-                ULTRA_MIN_BYTES,
-                ULTRA_MAX_BYTES,
-                candidates,
-                base_optimized,
+                target_bytes=ULTRA_TARGET_BYTES,
+                min_bytes=ULTRA_MIN_BYTES,
+                max_bytes=ULTRA_MAX_BYTES,
+                candidates=candidates,
+                fallback_bytes=base_optimized,
             )
 
         if level == "extreme":
-            if EXTREME_MIN_BYTES <= len(base_optimized) <= EXTREME_MAX_BYTES:
+            if EXTREME_MIN_BYTES <= len(base_optimized) <= EXTREME_MAX_BYTES and len(base_optimized) < original_size:
                 return base_optimized
 
             candidates = [
@@ -151,17 +171,17 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
             ]
             return _pick_target_profile(
                 file_bytes,
-                EXTREME_TARGET_BYTES,
-                EXTREME_MIN_BYTES,
-                EXTREME_MAX_BYTES,
-                candidates,
-                base_optimized,
+                target_bytes=EXTREME_TARGET_BYTES,
+                min_bytes=EXTREME_MIN_BYTES,
+                max_bytes=EXTREME_MAX_BYTES,
+                candidates=candidates,
+                fallback_bytes=base_optimized,
             )
 
-        if MEDIUM_MIN_BYTES <= len(base_optimized) <= MEDIUM_MAX_BYTES:
+        if len(base_optimized) < original_size and MEDIUM_MIN_BYTES <= len(base_optimized) <= MEDIUM_MAX_BYTES:
             return base_optimized
 
-        if len(base_optimized) < MEDIUM_MIN_BYTES:
+        if original_size <= MEDIUM_MAX_BYTES:
             return base_optimized
 
         candidates = [
@@ -174,11 +194,11 @@ def compress_pdf(file_bytes: bytes, level: str = "medium") -> bytes:
         ]
         return _pick_target_profile(
             file_bytes,
-            MEDIUM_TARGET_BYTES,
-            MEDIUM_MIN_BYTES,
-            MEDIUM_MAX_BYTES,
-            candidates,
-            base_optimized,
+            target_bytes=MEDIUM_TARGET_BYTES,
+            min_bytes=MEDIUM_MIN_BYTES,
+            max_bytes=MEDIUM_MAX_BYTES,
+            candidates=candidates,
+            fallback_bytes=base_optimized,
         )
     finally:
         doc.close()
