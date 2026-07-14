@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import io, json, os, logging, traceback
 
@@ -325,7 +326,14 @@ async def api_translate_pdf_download_edited_docx(request: DownloadEditedRequest)
 async def api_pdf_to_word(file: UploadFile = File(...)):
     try:
         content = await file.read()
-        converted_docx = convert_pdf_bytes_to_docx_bytes(content)
+        if not (file.filename or "").lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Vui lòng chọn file có định dạng PDF.")
+        if not content:
+            raise HTTPException(status_code=400, detail="File PDF trống.")
+
+        # PDF parsing and OCR are CPU-bound; keep FastAPI's event loop free so
+        # other requests remain usable during a large conversion.
+        converted_docx = await run_in_threadpool(convert_pdf_bytes_to_docx_bytes, content)
         base_name = (file.filename or "converted").rsplit(".", 1)[0]
         return StreamingResponse(
             io.BytesIO(converted_docx),
@@ -334,7 +342,10 @@ async def api_pdf_to_word(file: UploadFile = File(...)):
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("PDF to Word conversion failed for %s", file.filename)
         raise HTTPException(status_code=500, detail=str(e))
 
 

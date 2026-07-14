@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { API_URL } from '../config/api';
 
+const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 
 const PdfToWordWorkspace = () => {
   const [file, setFile]               = useState(null);
@@ -56,10 +58,16 @@ const PdfToWordWorkspace = () => {
       const res = await fetch(`${API_URL}/api/pdf-to-word`, { method: 'POST', body: fd });
       clearInterval(timer);
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Chuyển đổi thất bại');
+        const responseText = await res.text();
+        let detail = responseText;
+        try { detail = JSON.parse(responseText).detail || responseText; } catch { /* plain-text server error */ }
+        throw new Error(detail || `Chuyển đổi thất bại (HTTP ${res.status})`);
       }
       const blob = await res.blob();
+      const contentType = res.headers.get('content-type') || blob.type;
+      if (!blob.size || !contentType.toLowerCase().includes(DOCX_CONTENT_TYPE)) {
+        throw new Error('Máy chủ không trả về file Word hợp lệ. Vui lòng thử lại.');
+      }
       setResultBlob(blob);
       setResultName(f.name.replace(/\.pdf$/i, '') + '.docx');
       setProgress(100);
@@ -93,14 +101,19 @@ const PdfToWordWorkspace = () => {
     setResultName('');
     setErrorMsg('');
     setProgress(0);
+    if (inputRef.current) inputRef.current.value = '';
   };
 
   const download = () => {
     if (!resultBlob) return;
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(resultBlob);
+    const objectUrl = URL.createObjectURL(resultBlob);
+    a.href = objectUrl;
     a.download = resultName;
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   };
 
   // ── idle: dropzone ───────────────────────────────────────────────────────────

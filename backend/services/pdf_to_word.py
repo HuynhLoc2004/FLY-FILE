@@ -175,6 +175,12 @@ def _merge_paragraph_blocks(blocks, page_width):
 def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
     global GLOBAL_OCR_ENGINE
     pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if pdf_doc.needs_pass:
+        pdf_doc.close()
+        raise ValueError("File PDF được bảo vệ bằng mật khẩu. Vui lòng mở khóa file trước khi chuyển đổi.")
+    if pdf_doc.page_count == 0:
+        pdf_doc.close()
+        raise ValueError("File PDF không có trang nào.")
     pages_data = []
 
     for page_index in range(len(pdf_doc)):
@@ -183,7 +189,13 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
 
         # 1. Table detection — dùng word-level lookup để tránh chữ dính
         page_words = page.get_text("words")  # (x0,y0,x1,y1,text,blk,ln,wn)
-        tables = page.find_tables()
+        try:
+            tables = page.find_tables()
+        except Exception:
+            # Table recognition is best-effort. A malformed drawing on one page
+            # must not make the whole document fall back to plain text.
+            logger.warning("Could not detect tables on PDF page %s", page_index + 1, exc_info=True)
+            tables = []
         table_bboxes = [list(t.bbox) for t in tables]
         extracted_tables = []
 
@@ -430,6 +442,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                     "bold": rdata.get("bold", False) or (is_heading and blk_bold),
                     "italic": rdata.get("italic", False),
                     "size": rdata.get("size") or dom_size,
+                    "color": rdata.get("color"),
                 })
 
         for rdata in all_runs:
@@ -449,6 +462,8 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 run.font.color.rgb = RGBColor(r, g, b)
 
     for p_idx, page in enumerate(blocks_data.get("pages", [])):
+        if p_idx:
+            doc.add_page_break()
         for block in page.get("blocks", []):
             if block["type"] == "table":
                 cells = block.get("cells", [])
@@ -500,8 +515,18 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
 # ── convenience ───────────────────────────────────────────────────────────────
 
 def convert_pdf_bytes_to_docx_bytes(pdf_bytes: bytes) -> bytes:
+    if not pdf_bytes:
+        raise ValueError("File PDF trống.")
+    if not pdf_bytes.lstrip().startswith(b"%PDF-"):
+        raise ValueError("File tải lên không phải là PDF hợp lệ.")
     try:
         return build_docx_from_blocks(parse_pdf_to_blocks(pdf_bytes))
+    except ValueError:
+        # Invalid/encrypted PDFs need a useful client error instead of a DOCX
+        # containing only a generic fallback message.
+        raise
+    except fitz.FileDataError as exc:
+        raise ValueError("File PDF bị hỏng hoặc không thể đọc được.") from exc
     except Exception:
         logger.exception("Layout-preserving PDF to Word conversion failed; using plain-text fallback")
         return build_plain_text_docx(pdf_bytes)
