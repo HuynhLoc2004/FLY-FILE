@@ -28,6 +28,16 @@ except ImportError:
 import logging as _logging
 _logging.getLogger("pymupdf").setLevel(_logging.ERROR)
 
+_OCR_ENGINE = None
+
+
+def _get_ocr_engine():
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -213,7 +223,7 @@ def _gap_to_margin(gap_pt: float) -> int:
     return 30
 
 
-def _table_to_html(grid: list, font_size: float = 11.0) -> str:
+def _table_to_html(grid: list, font_size: float = 8.0) -> str:
     """Convert a 2-D grid of strings to an HTML <table>."""
     rows_html = []
     for row in grid:
@@ -241,7 +251,7 @@ def _ocr_page_to_elements(page: fitz.Page, page_w: float, preserved_assets: list
     Each OCR result is a text box; we map bounding box position to alignment.
     """
     try:
-        from rapidocr_onnxruntime import RapidOCR
+        ocr = _get_ocr_engine()
     except ImportError:
         return []
 
@@ -250,7 +260,6 @@ def _ocr_page_to_elements(page: fitz.Page, page_w: float, preserved_assets: list
     pix = page.get_pixmap(matrix=mat, alpha=False)
     img_bytes = pix.tobytes("png")
 
-    ocr = RapidOCR()
     result, _ = ocr(img_bytes)
     if not result:
         return []
@@ -528,7 +537,6 @@ def pdf_to_html_pages(pdf_bytes: bytes) -> list[dict]:
       { "page_num": int, "html": str, "width": float, "height": float,
         "is_scanned": bool, "image_b64": str (only for scanned pages) }
     """
-    import base64
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     pages = []
     for i, page in enumerate(doc):
@@ -542,13 +550,6 @@ def pdf_to_html_pages(pdf_bytes: bytes) -> list[dict]:
             "is_scanned": is_scanned,
             "preserved_assets": preserved_assets,
         }
-        if is_scanned:
-            # Render high-res image for Gemini vision (3x = ~216 DPI)
-            zoom = 3.0
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            img_bytes = pix.tobytes("png")
-            page_dict["image_b64"] = base64.b64encode(img_bytes).decode()
         pages.append(page_dict)
     doc.close()
     return pages

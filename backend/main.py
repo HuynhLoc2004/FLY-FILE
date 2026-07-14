@@ -139,12 +139,11 @@ async def api_translate_pdf_html(
     import base64
     import fitz  # PyMuPDF
     import re as _re
-    from concurrent.futures import ThreadPoolExecutor
     from services.translation.html_translator import (
         TranslationConfigurationError,
         TranslationProviderError,
         get_gemini_api_key,
-        translate_html_page,
+        translate_html_pages,
         translate_pdf_page_to_html,
     )
 
@@ -163,75 +162,71 @@ async def api_translate_pdf_html(
         content = await file.read()
         pages = pdf_to_html_pages(content)
 
-        # Keep every page independent. Pairing pages through a vision model lets
-        # the model recreate (and often alter) fonts, emphasis and preserved QR.
-        page_groups = [{"pages": [page], "paired": False} for page in pages]
+        from bs4 import BeautifulSoup
 
-        def _translate_group(group):
-            page_list = group["pages"]
-            if group["paired"]:
-                b64 = _extract_pages_as_pdf_b64(content, page_list[0]["page_num"], page_list[1]["page_num"])
+        # Translate all usable structured pages in bounded multi-page batches.
+        # A 91-page document no longer creates 91 simultaneous provider calls.
+        structured_pages = []
+        for p in pages:
+            source_text = BeautifulSoup(p.get("html", ""), "html.parser").get_text(" ", strip=True)
+            if source_text:
+                structured_pages.append(p)
+        translated_structured = await run_in_threadpool(
+            translate_html_pages,
+            [p["html"] for p in structured_pages],
+        ) if structured_pages else []
+        translated_by_page = {
+            p["page_num"]: translated
+            for p, translated in zip(structured_pages, translated_structured)
+        }
+
+        translated_pages = []
+        for p in pages:
+            translated_html = translated_by_page.get(p["page_num"])
+            if translated_html is None:
+                # Only pages whose OCR/text extraction genuinely failed use
+                # vision fallback. Never silently return an empty white page.
+                b64 = _extract_pages_as_pdf_b64(content, p["page_num"])
                 translated_html = translate_pdf_page_to_html(b64)
-                group_pages = [p["page_num"] for p in page_list]
-                lead = {**page_list[0], "translated_html": translated_html,
-                        "group_id": page_list[0]["page_num"], "is_group_lead": True, "group_pages": group_pages}
-                follower = {**page_list[1], "translated_html": "",
-                            "group_id": page_list[0]["page_num"], "is_group_lead": False, "group_pages": group_pages}
-                return [lead, follower]
-            else:
-                p = page_list[0]
-                # Translate text nodes only whenever extraction produced usable HTML.
-                # This deterministically preserves the source DOM/CSS instead of
-                # asking the vision model to guess fonts and emphasis.
-                if p.get("html", "").strip():
-                    translated_html = translate_html_page(p["html"], is_scanned=p.get("is_scanned", False))
-                else:
-                    b64 = _extract_pages_as_pdf_b64(content, p["page_num"])
-                    translated_html = translate_pdf_page_to_html(b64)
+                if not BeautifulSoup(translated_html, "html.parser").get_text(" ", strip=True):
+                    raise TranslationProviderError(
+                        f"Không đọc được nội dung trang {p['page_num']}; đã dừng để tránh trả trang trắng."
+                    )
 
-                assets = p.get("preserved_assets", [])
-                if assets:
-                    from bs4 import BeautifulSoup
+            assets = p.get("preserved_assets", [])
+            if assets:
+                asset_tags = []
+                page_width = max(float(p.get("width") or 1), 1)
+                max_asset_height = 1.0
+                for asset in assets:
+                    x0, y0, x1, y1 = asset["bbox"]
+                    max_asset_height = max(max_asset_height, y1 - y0)
+                    asset_tags.append(
+                        f'<img src="{asset["data_uri"]}" '
+                        f'alt="{"QR Code" if asset.get("kind") == "qr" else "Original stamp or signature"}" '
+                        'data-preserved-asset="true" '
+                        f'style="position:absolute;left:{x0/page_width*100:.3f}%;'
+                        f'top:0;width:{(x1-x0)/page_width*100:.3f}%;height:auto;z-index:2"/>'
+                    )
+                soup = BeautifulSoup(translated_html, "html.parser")
+                flow_page = soup.select_one(".pdf-flow-page")
+                asset_row = BeautifulSoup(
+                    f'<div class="preserved-assets-row" style="position:relative;width:100%;'
+                    f'height:{max_asset_height:.2f}pt;margin-top:8pt">'
+                    + "".join(asset_tags) + "</div>", "html.parser",
+                )
+                (flow_page or soup).append(asset_row.div)
+                translated_html = str(soup)
 
-                    asset_tags = []
-                    page_width = max(float(p.get("width") or 1), 1)
-                    max_asset_height = 1.0
-                    for asset in assets:
-                        x0, y0, x1, y1 = asset["bbox"]
-                        max_asset_height = max(max_asset_height, y1 - y0)
-                        asset_tags.append(
-                            f'<img src="{asset["data_uri"]}" '
-                            f'alt="{"QR Code" if asset.get("kind") == "qr" else "Original stamp or signature"}" '
-                            'data-preserved-asset="true" '
-                            f'style="position:absolute;left:{x0/page_width*100:.3f}%;'
-                            f'top:0;width:{(x1-x0)/page_width*100:.3f}%;'
-                            'height:auto;z-index:2"/>'
-                        )
-                    soup = BeautifulSoup(translated_html, "html.parser")
-                    flow_page = soup.select_one(".pdf-flow-page")
-                    if flow_page is not None:
-                        asset_row = BeautifulSoup(
-                            f'<div class="preserved-assets-row" style="position:relative;width:100%;'
-                            f'height:{max_asset_height:.2f}pt;margin-top:8pt">'
-                            + "".join(asset_tags) + "</div>",
-                            "html.parser",
-                        )
-                        flow_page.append(asset_row.div)
-                        translated_html = str(soup)
-                    else:
-                        translated_html = (
-                            f'<div style="position:relative;min-height:240mm">{translated_html}'
-                            + "".join(asset_tags) + "</div>"
-                        )
-                public_page = {key: value for key, value in p.items()
-                               if key not in {"html", "image_b64", "preserved_assets"}}
-                return [{**public_page, "translated_html": translated_html,
-                         "group_id": p["page_num"], "is_group_lead": True, "group_pages": [p["page_num"]]}]
-
-        # Translate groups in parallel (max 4 concurrent Gemini calls)
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            group_results = list(ex.map(_translate_group, page_groups))
-        translated_pages = [page for group in group_results for page in group]
+            public_page = {key: value for key, value in p.items()
+                           if key not in {"html", "image_b64", "preserved_assets"}}
+            translated_pages.append({
+                **public_page,
+                "translated_html": translated_html,
+                "group_id": p["page_num"],
+                "is_group_lead": True,
+                "group_pages": [p["page_num"]],
+            })
 
         return {
             "original_filename": file.filename or "document.pdf",

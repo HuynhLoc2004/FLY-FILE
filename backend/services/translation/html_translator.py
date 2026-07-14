@@ -183,12 +183,7 @@ def translate_scanned_to_html(raw_text: str, api_key: str | None = None) -> str:
 def translate_scanned_image_to_html(image_b64: str, api_key: str | None = None) -> str:
     return translate_pdf_page_to_html(image_b64, api_key)
 
-def translate_html_page(html: str, api_key: str | None = None, is_scanned: bool = False) -> str:
-    """Translate text nodes only, rebuilding the original DOM unchanged.
-
-    Gemini never gets to recreate tags or CSS here. This makes font family,
-    size, bold, italic, alignment and spacing deterministic.
-    """
+def _prepare_html_page(html: str):
     from bs4 import BeautifulSoup, NavigableString
 
     soup = BeautifulSoup(html, "html.parser")
@@ -207,8 +202,12 @@ def translate_html_page(html: str, api_key: str | None = None, is_scanned: bool 
     non_empty = [(target, segment) for target, segment in zip(targets, source_segments) if segment]
     targets = [item[0] for item in non_empty]
     source_segments = [item[1] for item in non_empty]
+    return soup, targets, source_segments
+
+
+def _translate_segment_batch(source_segments: list[str], key: str) -> list[str]:
     if not source_segments:
-        return html
+        return []
 
     prompt = f"""You are a professional Vietnamese-to-English legal translator.
 Translate the JSON array below as one document, using context across all items.
@@ -221,7 +220,6 @@ diacritics. Preserve punctuation belonging to each item. Do not output HTML or m
 SOURCE SEGMENTS:
 {json.dumps(source_segments, ensure_ascii=False)}"""
 
-    key = get_gemini_api_key(api_key)
     last_error: Exception | None = None
     for model in get_gemini_models():
         try:
@@ -229,26 +227,11 @@ SOURCE SEGMENTS:
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.I)
             cleaned = re.sub(r"\s*```$", "", cleaned).strip()
             translated = json.loads(cleaned)
-            if not isinstance(translated, list) or len(translated) != len(targets):
+            if not isinstance(translated, list) or len(translated) != len(source_segments):
                 raise ValueError("Gemini returned a different number of text segments")
             if not all(isinstance(item, str) for item in translated):
                 raise ValueError("Gemini returned non-text translation segments")
-
-            for target, translated_text in zip(targets, translated):
-                # Preserve the container and its source formatting. Use the
-                # first formatted span as the run style after joining PDF-split
-                # fragments back into one grammatically complete translation.
-                styled_run = target.find("span", style=True)
-                run_style = styled_run.get("style", "") if styled_run else ""
-                target.clear()
-                if run_style:
-                    translated_run = soup.new_tag("span")
-                    translated_run["style"] = run_style
-                    translated_run.string = translated_text
-                    target.append(translated_run)
-                else:
-                    target.append(NavigableString(translated_text))
-            return sanitize_translated_html("".join(str(node) for node in soup.contents))
+            return translated
         except Exception as exc:
             last_error = exc
             logger.warning("HTML text-node translation model %s failed: %s", model, exc)
@@ -256,6 +239,51 @@ SOURCE SEGMENTS:
     raise TranslationProviderError(
         "Gemini không thể dịch nội dung trong khi giữ nguyên định dạng PDF."
     ) from last_error
+
+
+def _apply_html_translations(soup, targets, translated: list[str]) -> str:
+    from bs4 import NavigableString
+
+    for target, translated_text in zip(targets, translated):
+        styled_run = target.find("span", style=True)
+        run_style = styled_run.get("style", "") if styled_run else ""
+        target.clear()
+        if run_style:
+            translated_run = soup.new_tag("span")
+            translated_run["style"] = run_style
+            translated_run.string = translated_text
+            target.append(translated_run)
+        else:
+            target.append(NavigableString(translated_text))
+    return sanitize_translated_html("".join(str(node) for node in soup.contents))
+
+
+def translate_html_pages(html_pages: list[str], api_key: str | None = None,
+                         max_segments_per_batch: int = 220) -> list[str]:
+    """Translate many pages in bounded batches while preserving each page DOM."""
+    key = get_gemini_api_key(api_key)
+    prepared = [_prepare_html_page(html) for html in html_pages]
+    flattened: list[tuple[int, int, str]] = []
+    for page_index, (_soup, _targets, segments) in enumerate(prepared):
+        flattened.extend((page_index, segment_index, text)
+                         for segment_index, text in enumerate(segments))
+
+    translated_by_page = [[""] * len(item[2]) for item in prepared]
+    for start in range(0, len(flattened), max_segments_per_batch):
+        batch = flattened[start:start + max_segments_per_batch]
+        translated = _translate_segment_batch([item[2] for item in batch], key)
+        for (page_index, segment_index, _source), translated_text in zip(batch, translated):
+            translated_by_page[page_index][segment_index] = translated_text
+
+    results = []
+    for (soup, targets, _segments), translated in zip(prepared, translated_by_page):
+        results.append(_apply_html_translations(soup, targets, translated))
+    return results
+
+
+def translate_html_page(html: str, api_key: str | None = None, is_scanned: bool = False) -> str:
+    """Translate one page through the same deterministic batch pipeline."""
+    return translate_html_pages([html], api_key=api_key)[0]
 
 def translate_html_document(pages: list[dict], api_key: str | None = None) -> list[dict]:
     return pages  # no longer used

@@ -10,6 +10,7 @@ from services.translation.html_translator import (
     get_gemini_models,
     sanitize_translated_html,
     translate_html_page,
+    translate_html_pages,
     translate_pdf_page_to_html,
 )
 
@@ -91,6 +92,29 @@ class HtmlTranslatorConfigurationTests(unittest.TestCase):
         self.assertIn("XÁC NHẬN:", prompt)
         self.assertIn("CERTIFIES:", translated)
         self.assertNotIn("CERTIFI</span>", translated)
+
+    @patch("services.translation.html_translator._call_gemini")
+    def test_multi_page_batches_map_every_segment_back_to_its_page(self, call_gemini):
+        call_gemini.side_effect = [
+            '["EN page 1 line 1", "EN page 1 line 2"]',
+            '["EN page 2 line 1", "EN page 2 line 2"]',
+            '["EN page 3 line 1"]',
+        ]
+        pages = [
+            '<div class="pdf-flow-block"><p>VI p1 l1</p><p>VI p1 l2</p></div>',
+            '<div class="pdf-flow-block"><p>VI p2 l1</p><p>VI p2 l2</p></div>',
+            '<div class="pdf-flow-block"><p>VI p3 l1</p></div>',
+        ]
+
+        translated = translate_html_pages(pages, api_key="test-key", max_segments_per_batch=2)
+
+        self.assertEqual(call_gemini.call_count, 3)
+        self.assertIn("EN page 1 line 1", translated[0])
+        self.assertIn("EN page 1 line 2", translated[0])
+        self.assertNotIn("EN page 2", translated[0])
+        self.assertIn("EN page 2 line 1", translated[1])
+        self.assertIn("EN page 2 line 2", translated[1])
+        self.assertIn("EN page 3 line 1", translated[2])
 
 
 if __name__ == "__main__":
