@@ -9,6 +9,7 @@ from services.pdf_merger import merge_pdfs
 from services.pdf_compressor import compress_pdf
 from services.pdf_page_merger import merge_pages_by_manifest
 from services.pdf_to_word import convert_pdf_bytes_to_docx_bytes, parse_pdf_to_blocks, build_docx_from_blocks
+from services.word_to_pdf import convert_word_bytes_to_pdf_bytes
 from services.translation import build_docx_from_translation
 from services.translation.html_extractor import pdf_to_html_pages
 
@@ -504,41 +505,16 @@ async def api_images_to_pdf(files: list[UploadFile] = File(...)):
 # ── Word → PDF ────────────────────────────────────────────────────────────────
 @app.post("/api/word-to-pdf")
 async def api_word_to_pdf(file: UploadFile = File(...)):
-    """Convert DOCX/DOC to PDF via mammoth (HTML) → xhtml2pdf (pure Python, no GTK needed)."""
+    """Convert DOCX to PDF with embedded Vietnamese fonts and adaptive pages."""
     try:
-        import mammoth
-        from xhtml2pdf import pisa
-
         content = await file.read()
-        result = mammoth.convert_to_html(io.BytesIO(content))
-        body_html = result.value
-
-        full_html = (
-            '<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"/><style>'
-            'body{font-family:Times New Roman,serif;font-size:12pt;line-height:1.5;color:#000;margin:0;padding:0;}'
-            '@page{size:A4;margin:25mm 20mm 20mm 25mm;}'
-            'p{margin-top:0;margin-bottom:8pt;}'
-            'h1,h2,h3,h4,h5,h6{font-family:Times New Roman,serif;page-break-after:avoid;margin-top:14pt;margin-bottom:6pt;}'
-            'table{width:100%;border-collapse:collapse;margin-bottom:10pt;font-size:11pt;}'
-            'td,th{border:1px solid #000;padding:4pt 6pt;vertical-align:top;word-wrap:break-word;}'
-            'img{max-width:100%;height:auto;}'
-            'ul,ol{margin:0 0 8pt 20pt;padding:0;}li{margin-bottom:3pt;}'
-            '</style></head><body>' + body_html + '</body></html>'
-        )
-
-        pdf_buf = io.BytesIO()
-        status = pisa.CreatePDF(
-            io.StringIO(full_html),
-            dest=pdf_buf,
-            encoding="utf-8",
-        )
-        if status.err:
-            raise HTTPException(status_code=500, detail=f"PDF conversion error: {status.err}")
+        if not (file.filename or "").lower().endswith(".docx"):
+            raise HTTPException(status_code=400, detail="Vui lòng chọn file Word định dạng .docx.")
+        pdf_bytes = await run_in_threadpool(convert_word_bytes_to_pdf_bytes, content)
 
         base = (file.filename or "document").rsplit(".", 1)[0]
-        pdf_buf.seek(0)
         return StreamingResponse(
-            pdf_buf,
+            io.BytesIO(pdf_bytes),
             media_type="application/pdf",
             headers={"Content-Disposition": make_safe_filename_header(f"{base}.pdf")},
         )

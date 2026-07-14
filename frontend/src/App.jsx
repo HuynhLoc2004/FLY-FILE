@@ -9,7 +9,7 @@ const ToolPage = lazy(() => import('./pages/ToolPage'));
 const AppContent = () => {
   const location = useLocation();
   const showCursorFollower = location.pathname === '/';
-
+  
   return (
     <>
       {showCursorFollower && <CursorFollower />}
