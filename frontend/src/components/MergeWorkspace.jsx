@@ -46,7 +46,7 @@ const buildPageList = (files) =>
       extension: f.extension,
       pageNum: i + 1,
       selected: true,
-      rotation: f.rotation,
+      rotation: 0,
     }))
   );
 
