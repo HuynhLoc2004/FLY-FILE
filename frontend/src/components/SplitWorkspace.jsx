@@ -13,6 +13,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [removedPages, setRemovedPages] = useState(() => new Set());
   const [insertions, setInsertions] = useState({});
   const [pageRotations, setPageRotations] = useState({});
+  const [fineRotations, setFineRotations] = useState({});
   const [status, setStatus] = useState('idle');
   const [extracting, setExtracting] = useState(null);
   const [error, setError] = useState('');
@@ -22,6 +23,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     setRemovedPages(new Set());
     setInsertions({});
     setPageRotations({});
+    setFineRotations({});
     setStatus('idle');
     setError('');
   };
@@ -57,6 +59,19 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       ...current,
       [pageNumber]: ((current[pageNumber] || 0) + angle + 360) % 360,
     }));
+  };
+
+  const setFineRotation = (pageNumber, value) => {
+    if (removedPages.has(pageNumber)) return;
+    const angle = Math.max(-15, Math.min(15, Number(value) || 0));
+    setFineRotations((current) => {
+      const next = { ...current };
+      if (Math.abs(angle) < 0.01) delete next[pageNumber];
+      else next[pageNumber] = angle;
+      return next;
+    });
+    setStatus('idle');
+    setError('');
   };
 
   const restoreAllPages = () => {
@@ -116,8 +131,14 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
 
   const downloadResult = async () => {
     if (!file || !totalPages) return;
-    if (!removedPages.size) {
-      setError('Hãy bấm icon cái kéo trên ít nhất một trang cần cắt bỏ.');
+    const hasRotationChange = Object.entries(pageRotations).some(
+      ([page, angle]) => angle && !removedPages.has(Number(page)),
+    );
+    const hasDeskewChange = Object.entries(fineRotations).some(
+      ([page, angle]) => angle && !removedPages.has(Number(page)),
+    );
+    if (!removedPages.size && !hasRotationChange && !hasDeskewChange) {
+      setError('Hãy cắt, xoay hoặc nắn thẳng ít nhất một trang trước khi xuất file.');
       return;
     }
     if (removedPages.size >= totalPages && Object.keys(insertions).length === 0) {
@@ -134,6 +155,9 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       form.append('file', file);
       form.append('removed_pages', JSON.stringify([...removedPages].sort((a, b) => a - b)));
       form.append('page_rotations', JSON.stringify(rotations));
+      form.append('fine_rotations', JSON.stringify(Object.fromEntries(
+        Object.entries(fineRotations).filter(([page, angle]) => angle && !removedPages.has(Number(page))),
+      )));
       const insertionEntries = Object.entries(insertions).sort(([a], [b]) => Number(a) - Number(b));
       form.append('insertion_manifest', JSON.stringify(insertionEntries.map(([position], fileIndex) => ({
         position: Number(position),
@@ -143,12 +167,12 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       const response = await fetch(`${API_URL}/api/remove-pages`, { method: 'POST', body: form });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail || 'Không thể cắt trang PDF');
+        throw new Error(body.detail || 'Không thể xuất PDF đã chỉnh sửa');
       }
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = file.name.replace(/\.pdf$/i, '') + '_da_cat_trang.pdf';
+      anchor.download = file.name.replace(/\.pdf$/i, '') + '_da_chinh_sua.pdf';
       anchor.click();
       URL.revokeObjectURL(url);
       setStatus('done');
@@ -160,6 +184,11 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
 
   const remainingPageCount = Math.max(0, (totalPages || 0) - removedPages.size);
   const insertedPageCount = Object.keys(insertions).length;
+  const adjustedPageCount = Object.keys(fineRotations).filter((page) => !removedPages.has(Number(page))).length;
+  const rotatedPageCount = Object.keys(pageRotations).filter(
+    (page) => pageRotations[page] && !removedPages.has(Number(page)),
+  ).length;
+  const hasOutputChanges = removedPages.size > 0 || adjustedPageCount > 0 || rotatedPageCount > 0;
   const finalPageCount = remainingPageCount + insertedPageCount;
   const sortedRemovedPages = [...removedPages].sort((a, b) => a - b);
   const pages = totalPages ? Array.from({ length: totalPages }, (_, index) => index + 1) : [];
@@ -170,7 +199,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
         <div>
           <p className="split-eyebrow">Cắt bỏ trang PDF</p>
           <h2><Scissors size={22} /> Chọn đúng trang cần cắt bỏ</h2>
-          <span>Bấm icon cái kéo trên từng trang. Các trang còn lại giữ nguyên nội dung và thứ tự gốc.</span>
+          <span>Cắt, chèn, xoay hoặc nắn thẳng từng trang rồi xuất PDF mới mà không hạ chất lượng ảnh.</span>
         </div>
         <button className="btn btn-outline" onClick={onCancel}><RefreshCw size={14} /> Chọn lại</button>
       </div>
@@ -195,12 +224,13 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
             <>
               <div className="split-instruction">
                 <Scissors size={18} />
-                <div><strong>Cách cắt trang</strong><span>Bấm nút kéo ngay trên trang muốn bỏ. Bấm lại để hoàn tác.</span></div>
+                <div><strong>Chỉnh từng trang</strong><span>Dùng icon kéo để cắt hoặc thanh góc để nắn trang scan bị nghiêng. Bấm đặt lại để về 0°.</span></div>
               </div>
               <div className="split-summary">
                 <div>{totalPages} trang gốc</div>
                 <div className={removedPages.size ? 'split-summary-removed' : ''}>{removedPages.size} trang sẽ bị cắt bỏ</div>
                 <div>{insertedPageCount} trang mới sẽ được chèn</div>
+                <div>{adjustedPageCount} trang đã nắn thẳng</div>
                 <div>{finalPageCount} trang trong file kết quả</div>
               </div>
               {removedPages.size > 0 && (
@@ -217,10 +247,10 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                 </>
               )}
               <button className="btn btn-primary" onClick={downloadResult}
-                disabled={status === 'loading' || !removedPages.size || !finalPageCount}>
+                disabled={status === 'loading' || !hasOutputChanges || !finalPageCount}>
                 {status === 'loading'
                   ? <><Loader2 size={14} className="spin" /> Đang tạo file...</>
-                  : <><Download size={14} /> Tải PDF sau khi cắt</>}
+                  : <><Download size={14} /> Tải PDF đã chỉnh sửa</>}
               </button>
             </>
           )}
@@ -255,7 +285,9 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                           <div className="split-page-preview">
                             {insertions[pageNumber]
                               ? <PdfRenderer file={insertions[pageNumber]} pageNum={1} width={150} lazy={false} />
-                              : <PdfPageThumbnail pageNum={pageNumber} width={150} rotation={pageRotations[pageNumber] || null} />}
+                              : <div className="split-page-fine-rotation" style={{ transform: `rotate(${fineRotations[pageNumber] || 0}deg)` }}>
+                                  <PdfPageThumbnail pageNum={pageNumber} width={150} rotation={pageRotations[pageNumber] || null} />
+                                </div>}
                             <button type="button" className="split-cut-page-button"
                               onClick={() => toggleRemovedPage(pageNumber)}
                               aria-label={isRemoved ? `Khôi phục trang ${pageNumber}` : `Cắt bỏ trang ${pageNumber}`}
@@ -265,6 +297,20 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                             {isRemoved && !insertions[pageNumber] && <div className="split-removed-label">Đã cắt</div>}
                             {insertions[pageNumber] && <div className="split-inserted-label">Trang mới</div>}
                           </div>
+                          {!isRemoved && (
+                            <div className="split-deskew-control">
+                              <div>
+                                <span>Nắn thẳng</span>
+                                <strong>{Number(fineRotations[pageNumber] || 0).toFixed(1)}°</strong>
+                              </div>
+                              <input type="range" min="-15" max="15" step="0.5"
+                                value={fineRotations[pageNumber] || 0}
+                                onChange={(event) => setFineRotation(pageNumber, event.target.value)}
+                                aria-label={`Nắn thẳng trang ${pageNumber}`} />
+                              <button type="button" onClick={() => setFineRotation(pageNumber, 0)}
+                                disabled={!fineRotations[pageNumber]}>Đặt lại</button>
+                            </div>
+                          )}
                           <div className="split-page-footer">
                             <span>Trang {pageNumber}</span>
                             <div>
@@ -303,7 +349,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
               )}
             </Document>
           )}
-          {status === 'done' && <p className="split-status-success">Đã tải PDF mới. Các trang được giữ nguyên theo đúng thứ tự ban đầu.</p>}
+          {status === 'done' && <p className="split-status-success">Đã tải PDF chỉnh sửa mới, giữ nguyên dữ liệu và chất lượng ảnh nguồn.</p>}
           {error && <p className="split-status-error">{error}</p>}
         </main>
       </div>

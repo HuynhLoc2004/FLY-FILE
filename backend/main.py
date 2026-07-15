@@ -498,6 +498,7 @@ async def api_remove_pages(
     file: UploadFile = File(...),
     removed_pages: str = Form(...),
     page_rotations: str = Form(default="{}"),
+    fine_rotations: str = Form(default="{}"),
     insertion_manifest: str = Form(default="[]"),
     insert_files: list[UploadFile] | None = File(default=None),
 ):
@@ -512,10 +513,12 @@ async def api_remove_pages(
         try:
             requested_pages = json.loads(removed_pages or "[]")
             rotations = json.loads(page_rotations or "{}")
+            requested_fine_rotations = json.loads(fine_rotations or "{}")
             requested_insertions = json.loads(insertion_manifest or "[]")
         except (TypeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
         if (not isinstance(requested_pages, list) or not isinstance(rotations, dict)
+                or not isinstance(requested_fine_rotations, dict)
                 or not isinstance(requested_insertions, list)):
             raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
 
@@ -544,10 +547,19 @@ async def api_remove_pages(
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail="Số trang cần cắt không hợp lệ.")
 
-            if not removed:
-                raise HTTPException(status_code=400, detail="Chưa chọn trang cần cắt bỏ.")
             if any(page < 1 or page > total for page in removed):
                 raise HTTPException(status_code=400, detail="Trang cần cắt nằm ngoài file PDF.")
+            try:
+                precise_rotations = {
+                    int(page): float(angle)
+                    for page, angle in requested_fine_rotations.items()
+                    if abs(float(angle)) >= 0.01
+                }
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Góc nắn thẳng không hợp lệ.")
+            if any(page < 1 or page > total or abs(angle) > 15
+                   for page, angle in precise_rotations.items()):
+                raise HTTPException(status_code=400, detail="Góc nắn thẳng phải nằm trong khoảng -15° đến 15°.")
             insertions = {}
             try:
                 for entry in requested_insertions:
@@ -561,6 +573,8 @@ async def api_remove_pages(
 
             if len(removed) >= total and not insertions:
                 raise HTTPException(status_code=400, detail="Phải giữ lại ít nhất một trang.")
+            if not removed and not precise_rotations and not any(int(value) % 360 for value in rotations.values()):
+                raise HTTPException(status_code=400, detail="Chưa có thay đổi nào để xuất file.")
 
             result = fitz.open()
             try:
@@ -570,9 +584,26 @@ async def api_remove_pages(
                             replacement = insertion_docs[insertions[original_page]]
                             result.insert_pdf(replacement, from_page=0, to_page=0)
                     else:
-                        result.insert_pdf(source, from_page=original_page - 1, to_page=original_page - 1)
                         extra_rotation = int(rotations.get(str(original_page), 0)) % 360
-                        if extra_rotation:
+                        precise_rotation = precise_rotations.get(original_page, 0)
+                        if precise_rotation:
+                            # show_pdf_page reuses the source PDF page as vector/image
+                            # content. It does not rasterize or recompress embedded images.
+                            source_page = source[original_page - 1]
+                            output_page = result.new_page(
+                                width=source_page.rect.width,
+                                height=source_page.rect.height,
+                            )
+                            output_page.show_pdf_page(
+                                output_page.rect,
+                                source,
+                                original_page - 1,
+                                rotate=precise_rotation + extra_rotation,
+                                keep_proportion=True,
+                            )
+                        else:
+                            result.insert_pdf(source, from_page=original_page - 1, to_page=original_page - 1)
+                        if extra_rotation and not precise_rotation:
                             output_page = result[result.page_count - 1]
                             output_page.set_rotation((output_page.rotation + extra_rotation) % 360)
                 output = result.tobytes()

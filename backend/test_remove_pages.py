@@ -25,6 +25,7 @@ class RemovePagesEndpointTests(unittest.IsolatedAsyncioTestCase):
             upload,
             removed_pages=json.dumps([2]),
             page_rotations=json.dumps({"3": 90}),
+            fine_rotations="{}",
             insertion_manifest="[]",
             insert_files=None,
         )
@@ -42,7 +43,7 @@ class RemovePagesEndpointTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HTTPException) as raised:
             await api_remove_pages(
                 upload, removed_pages="[1, 2]", page_rotations="{}",
-                insertion_manifest="[]", insert_files=None,
+                fine_rotations="{}", insertion_manifest="[]", insert_files=None,
             )
         self.assertEqual(raised.exception.status_code, 400)
         self.assertIn("ít nhất một trang", raised.exception.detail)
@@ -54,6 +55,7 @@ class RemovePagesEndpointTests(unittest.IsolatedAsyncioTestCase):
             upload,
             removed_pages="[2]",
             page_rotations="{}",
+            fine_rotations="{}",
             insertion_manifest='[{"position": 2, "file_index": 0}]',
             insert_files=[replacement],
         )
@@ -63,6 +65,24 @@ class RemovePagesEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ORIGINAL PAGE 1", result[0].get_text())
         self.assertIn("ORIGINAL PAGE 1", result[1].get_text())
         self.assertIn("ORIGINAL PAGE 3", result[2].get_text())
+        result.close()
+
+    async def test_precise_rotation_keeps_pdf_text_as_content(self):
+        upload = UploadFile(filename="sample.pdf", file=io.BytesIO(make_pdf(2)))
+        response = await api_remove_pages(
+            upload,
+            removed_pages="[]",
+            page_rotations="{}",
+            fine_rotations='{"1": -2.5}',
+            insertion_manifest="[]",
+            insert_files=None,
+        )
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        result = fitz.open(stream=body, filetype="pdf")
+        self.assertEqual(result.page_count, 2)
+        self.assertIn("ORIGINAL PAGE 1", result[0].get_text())
+        self.assertIn("ORIGINAL PAGE 2", result[1].get_text())
+        self.assertTrue(result[0].get_xobjects())
         result.close()
 
     async def test_extracts_cut_pages_as_a_new_pdf(self):
