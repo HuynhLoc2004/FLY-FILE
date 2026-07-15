@@ -1,19 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   Download, FileText, Loader2, RefreshCw, RotateCcw, RotateCw,
   Scissors, Undo2, Upload,
 } from 'lucide-react';
 import { API_URL } from '../config/api';
-import PdfRenderer from './PdfRenderer';
-
-const readPdfPageCount = async (rawFile) => {
-  const { getDocument } = await import('pdfjs-dist');
-  const loadingTask = getDocument({ data: await rawFile.arrayBuffer() });
-  const pdf = await loadingTask.promise;
-  const pageCount = pdf.numPages;
-  await pdf.destroy();
-  return pageCount;
-};
+import { Document } from 'react-pdf';
+import { PdfPageThumbnail } from './PdfRenderer';
 
 const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [file, setFile] = useState(initialFiles?.[0] || null);
@@ -31,32 +23,11 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     setError('');
   };
 
-  const loadFile = async (rawFile) => {
+  const loadFile = (rawFile) => {
     setFile(rawFile);
     setTotalPages(null);
     resetSelection();
-    try {
-      setTotalPages(await readPdfPageCount(rawFile));
-    } catch {
-      setError('Không đọc được các trang trong file PDF. Vui lòng chọn file khác.');
-    }
   };
-
-  useEffect(() => {
-    const rawFile = initialFiles?.[0];
-    if (!rawFile) return undefined;
-    let cancelled = false;
-    readPdfPageCount(rawFile)
-      .then((count) => {
-        if (!cancelled) {
-          setFile(rawFile);
-          setTotalPages(count);
-          resetSelection();
-        }
-      })
-      .catch(() => { if (!cancelled) setError('Không đọc được các trang trong file PDF. Vui lòng chọn file khác.'); });
-    return () => { cancelled = true; };
-  }, [initialFiles]);
 
   const toggleRemovedPage = (pageNumber) => {
     setRemovedPages((current) => {
@@ -183,41 +154,49 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
               <Scissors size={42} /><strong>Chọn một PDF để hiện toàn bộ trang</strong>
               <span>Mỗi trang sẽ có nút kéo riêng để bạn chọn cắt bỏ.</span>
             </div>
-          ) : !totalPages ? (
-            <div className="split-empty-preview"><Loader2 size={36} className="spin" /><strong>Đang tải toàn bộ trang...</strong></div>
           ) : (
-            <>
-              <div className="split-preview-head">
-                <div><p>Toàn bộ trang trong file</p><h3>Giữ nguyên số trang gốc từ 1 đến {totalPages}</h3></div>
-                <span className="split-page-count">{remainingPageCount}/{totalPages} trang được giữ</span>
-              </div>
-              <div className="split-all-pages-grid">
-                {pages.map((pageNumber) => {
-                  const isRemoved = removedPages.has(pageNumber);
-                  return (
-                    <article className={`split-page-card${isRemoved ? ' split-page-card-removed' : ''}`} key={pageNumber}>
-                      <div className="split-page-preview">
-                        <PdfRenderer file={file} pageNum={pageNumber} width={150} rotation={pageRotations[pageNumber] || null} />
-                        <button type="button" className="split-cut-page-button"
-                          onClick={() => toggleRemovedPage(pageNumber)}
-                          aria-label={isRemoved ? `Khôi phục trang ${pageNumber}` : `Cắt bỏ trang ${pageNumber}`}
-                          title={isRemoved ? 'Bấm để khôi phục trang' : 'Cắt bỏ trang này'}>
-                          {isRemoved ? <Undo2 size={18} /> : <Scissors size={18} />}
-                        </button>
-                        {isRemoved && <div className="split-removed-label">Đã cắt</div>}
-                      </div>
-                      <div className="split-page-footer">
-                        <span>Trang {pageNumber}</span>
-                        <div>
-                          <button type="button" disabled={isRemoved} onClick={() => rotatePage(pageNumber, 270)} aria-label={`Xoay trái trang ${pageNumber}`}><RotateCcw size={14} /></button>
-                          <button type="button" disabled={isRemoved} onClick={() => rotatePage(pageNumber, 90)} aria-label={`Xoay phải trang ${pageNumber}`}><RotateCw size={14} /></button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </>
+            <Document
+              file={file}
+              onLoadSuccess={({ numPages }) => setTotalPages(numPages)}
+              onLoadError={() => setError('Không đọc được các trang trong file PDF. Vui lòng chọn file khác.')}
+              loading={<div className="split-empty-preview"><Loader2 size={36} className="spin" /><strong>Đang mở file PDF...</strong></div>}
+              error={<div className="split-empty-preview"><strong>Không thể mở file PDF</strong><span>Vui lòng kiểm tra và chọn lại file.</span></div>}
+            >
+              {totalPages && (
+                <>
+                  <div className="split-preview-head">
+                    <div><p>Toàn bộ trang trong file</p><h3>Giữ nguyên số trang gốc từ 1 đến {totalPages}</h3></div>
+                    <span className="split-page-count">{remainingPageCount}/{totalPages} trang được giữ</span>
+                  </div>
+                  <div className="split-all-pages-grid">
+                    {pages.map((pageNumber) => {
+                      const isRemoved = removedPages.has(pageNumber);
+                      return (
+                        <article className={`split-page-card${isRemoved ? ' split-page-card-removed' : ''}`} key={pageNumber}>
+                          <div className="split-page-preview">
+                            <PdfPageThumbnail pageNum={pageNumber} width={150} rotation={pageRotations[pageNumber] || null} />
+                            <button type="button" className="split-cut-page-button"
+                              onClick={() => toggleRemovedPage(pageNumber)}
+                              aria-label={isRemoved ? `Khôi phục trang ${pageNumber}` : `Cắt bỏ trang ${pageNumber}`}
+                              title={isRemoved ? 'Bấm để khôi phục trang' : 'Cắt bỏ trang này'}>
+                              {isRemoved ? <Undo2 size={18} /> : <Scissors size={18} />}
+                            </button>
+                            {isRemoved && <div className="split-removed-label">Đã cắt</div>}
+                          </div>
+                          <div className="split-page-footer">
+                            <span>Trang {pageNumber}</span>
+                            <div>
+                              <button type="button" disabled={isRemoved} onClick={() => rotatePage(pageNumber, 270)} aria-label={`Xoay trái trang ${pageNumber}`}><RotateCcw size={14} /></button>
+                              <button type="button" disabled={isRemoved} onClick={() => rotatePage(pageNumber, 90)} aria-label={`Xoay phải trang ${pageNumber}`}><RotateCw size={14} /></button>
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </Document>
           )}
           {status === 'done' && <p className="split-status-success">Đã tải PDF mới. Các trang được giữ nguyên theo đúng thứ tự ban đầu.</p>}
           {error && <p className="split-status-error">{error}</p>}

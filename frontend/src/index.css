@@ -1223,6 +1223,28 @@ a {
   filter: grayscale(1);
 }
 
+.split-page-skeleton {
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: linear-gradient(110deg, #e2e8f0 8%, #f8fafc 18%, #e2e8f0 33%);
+  background-size: 200% 100%;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+  animation: split-page-loading 1.2s linear infinite;
+}
+
+.split-page-render-error {
+  background: #fee2e2;
+  color: #b91c1c;
+  animation: none;
+}
+
+@keyframes split-page-loading {
+  to { background-position-x: -200%; }
+}
+
 .split-cut-page-button {
   position: absolute;
   z-index: 3;

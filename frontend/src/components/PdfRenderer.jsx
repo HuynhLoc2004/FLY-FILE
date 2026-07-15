@@ -101,4 +101,46 @@ const PdfRenderer = ({ file, pageNum = 1, scale = 1.0, onDocumentLoad, rotation 
   );
 };
 
+const PdfPageThumbnailComponent = ({ pageNum = 1, rotation = null, width = 120 }) => {
+  const wrapperRef = useRef(null);
+  const [shouldRender, setShouldRender] = useState(false);
+  const height = Math.round(width * 1.41);
+
+  useEffect(() => {
+    const node = wrapperRef.current;
+    if (!node) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setShouldRender(true);
+        observer.disconnect();
+      }
+    }, {
+      rootMargin: '220px 0px',
+      threshold: 0.01,
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={wrapperRef} style={{ width, height }}>
+      {shouldRender ? (
+        <Page
+          pageNumber={pageNum}
+          {...(rotation == null ? {} : { rotate: rotation })}
+          width={width}
+          devicePixelRatio={1}
+          renderAnnotationLayer={false}
+          renderTextLayer={false}
+          loading={<div className="split-page-skeleton" style={{ width, height }}>Trang {pageNum}</div>}
+          error={<div className="split-page-skeleton split-page-render-error" style={{ width, height }}>Lỗi trang {pageNum}</div>}
+        />
+      ) : (
+        <div className="split-page-skeleton" style={{ width, height }}>Trang {pageNum}</div>
+      )}
+    </div>
+  );
+};
+
+export const PdfPageThumbnail = memo(PdfPageThumbnailComponent);
 export default memo(PdfRenderer);
