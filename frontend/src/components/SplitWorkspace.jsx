@@ -1,23 +1,26 @@
 import { useRef, useState } from 'react';
 import {
   Download, FileText, Loader2, RefreshCw, RotateCcw, RotateCw,
-  Scissors, Undo2, Upload,
+  Plus, Scissors, Undo2, Upload, X,
 } from 'lucide-react';
 import { API_URL } from '../config/api';
 import { Document } from 'react-pdf';
-import { PdfPageThumbnail } from './PdfRenderer';
+import PdfRenderer, { PdfPageThumbnail } from './PdfRenderer';
 
 const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [file, setFile] = useState(initialFiles?.[0] || null);
   const [totalPages, setTotalPages] = useState(null);
   const [removedPages, setRemovedPages] = useState(() => new Set());
+  const [insertions, setInsertions] = useState({});
   const [pageRotations, setPageRotations] = useState({});
   const [status, setStatus] = useState('idle');
+  const [extracting, setExtracting] = useState(null);
   const [error, setError] = useState('');
   const inputRef = useRef(null);
 
   const resetSelection = () => {
     setRemovedPages(new Set());
+    setInsertions({});
     setPageRotations({});
     setStatus('idle');
     setError('');
@@ -30,12 +33,20 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   };
 
   const toggleRemovedPage = (pageNumber) => {
+    const isRestoring = removedPages.has(pageNumber);
     setRemovedPages((current) => {
       const next = new Set(current);
       if (next.has(pageNumber)) next.delete(pageNumber);
       else next.add(pageNumber);
       return next;
     });
+    if (isRestoring) {
+      setInsertions((current) => {
+        const next = { ...current };
+        delete next[pageNumber];
+        return next;
+      });
+    }
     setStatus('idle');
     setError('');
   };
@@ -50,8 +61,57 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
 
   const restoreAllPages = () => {
     setRemovedPages(new Set());
+    setInsertions({});
     setStatus('idle');
     setError('');
+  };
+
+  const setInsertedPage = (pageNumber, insertedFile) => {
+    if (!insertedFile) return;
+    if (!insertedFile.name.toLowerCase().endsWith('.pdf')) {
+      setError('Trang chèn mới phải là file PDF đúng 1 trang.');
+      return;
+    }
+    setInsertions((current) => ({ ...current, [pageNumber]: insertedFile }));
+    setRemovedPages((current) => new Set(current).add(pageNumber));
+    setStatus('idle');
+    setError('');
+  };
+
+  const removeInsertedPage = (pageNumber) => {
+    setInsertions((current) => {
+      const next = { ...current };
+      delete next[pageNumber];
+      return next;
+    });
+    setStatus('idle');
+  };
+
+  const extractPages = async (pageNumbers, extractionKey = 'all') => {
+    if (!file || !pageNumbers.length) return;
+    setExtracting(extractionKey);
+    setError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      form.append('pages', JSON.stringify(pageNumbers));
+      const response = await fetch(`${API_URL}/api/extract-pages`, { method: 'POST', body: form });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail || 'Không thể xuất trang đã cắt');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      const pageLabel = pageNumbers.length === 1 ? `_trang_${pageNumbers[0]}` : '_cac_trang_da_cat';
+      anchor.href = url;
+      anchor.download = file.name.replace(/\.pdf$/i, '') + pageLabel + '.pdf';
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (extractError) {
+      setError(extractError.message);
+    } finally {
+      setExtracting(null);
+    }
   };
 
   const downloadResult = async () => {
@@ -60,7 +120,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       setError('Hãy bấm icon cái kéo trên ít nhất một trang cần cắt bỏ.');
       return;
     }
-    if (removedPages.size >= totalPages) {
+    if (removedPages.size >= totalPages && Object.keys(insertions).length === 0) {
       setError('Không thể cắt bỏ toàn bộ trang. Hãy giữ lại ít nhất một trang.');
       return;
     }
@@ -74,6 +134,12 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       form.append('file', file);
       form.append('removed_pages', JSON.stringify([...removedPages].sort((a, b) => a - b)));
       form.append('page_rotations', JSON.stringify(rotations));
+      const insertionEntries = Object.entries(insertions).sort(([a], [b]) => Number(a) - Number(b));
+      form.append('insertion_manifest', JSON.stringify(insertionEntries.map(([position], fileIndex) => ({
+        position: Number(position),
+        file_index: fileIndex,
+      }))));
+      insertionEntries.forEach(([, insertedFile]) => form.append('insert_files', insertedFile));
       const response = await fetch(`${API_URL}/api/remove-pages`, { method: 'POST', body: form });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
@@ -93,6 +159,9 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   };
 
   const remainingPageCount = Math.max(0, (totalPages || 0) - removedPages.size);
+  const insertedPageCount = Object.keys(insertions).length;
+  const finalPageCount = remainingPageCount + insertedPageCount;
+  const sortedRemovedPages = [...removedPages].sort((a, b) => a - b);
   const pages = totalPages ? Array.from({ length: totalPages }, (_, index) => index + 1) : [];
 
   return (
@@ -131,15 +200,24 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
               <div className="split-summary">
                 <div>{totalPages} trang gốc</div>
                 <div className={removedPages.size ? 'split-summary-removed' : ''}>{removedPages.size} trang sẽ bị cắt bỏ</div>
-                <div>{remainingPageCount} trang được giữ lại</div>
+                <div>{insertedPageCount} trang mới sẽ được chèn</div>
+                <div>{finalPageCount} trang trong file kết quả</div>
               </div>
               {removedPages.size > 0 && (
-                <button type="button" className="btn btn-outline" onClick={restoreAllPages}>
-                  <Undo2 size={14} /> Khôi phục tất cả trang
-                </button>
+                <>
+                  <button type="button" className="btn btn-outline"
+                    onClick={() => extractPages(sortedRemovedPages)} disabled={extracting !== null}>
+                    {extracting === 'all'
+                      ? <><Loader2 size={14} className="spin" /> Đang xuất...</>
+                      : <><Download size={14} /> Tải các trang đã cắt</>}
+                  </button>
+                  <button type="button" className="btn btn-outline" onClick={restoreAllPages}>
+                    <Undo2 size={14} /> Khôi phục tất cả trang
+                  </button>
+                </>
               )}
               <button className="btn btn-primary" onClick={downloadResult}
-                disabled={status === 'loading' || !removedPages.size || !remainingPageCount}>
+                disabled={status === 'loading' || !removedPages.size || !finalPageCount}>
                 {status === 'loading'
                   ? <><Loader2 size={14} className="spin" /> Đang tạo file...</>
                   : <><Download size={14} /> Tải PDF sau khi cắt</>}
@@ -167,22 +245,25 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                 <>
                   <div className="split-preview-head">
                     <div><p>Toàn bộ trang trong file</p><h3>Giữ nguyên số trang gốc từ 1 đến {totalPages}</h3></div>
-                    <span className="split-page-count">{remainingPageCount}/{totalPages} trang được giữ</span>
+                    <span className="split-page-count">File mới: {finalPageCount} trang</span>
                   </div>
                   <div className="split-all-pages-grid">
                     {pages.map((pageNumber) => {
                       const isRemoved = removedPages.has(pageNumber);
                       return (
-                        <article className={`split-page-card${isRemoved ? ' split-page-card-removed' : ''}`} key={pageNumber}>
+                        <article className={`split-page-card${isRemoved ? ' split-page-card-removed' : ''}${insertions[pageNumber] ? ' split-page-card-replaced' : ''}`} key={pageNumber}>
                           <div className="split-page-preview">
-                            <PdfPageThumbnail pageNum={pageNumber} width={150} rotation={pageRotations[pageNumber] || null} />
+                            {insertions[pageNumber]
+                              ? <PdfRenderer file={insertions[pageNumber]} pageNum={1} width={150} lazy={false} />
+                              : <PdfPageThumbnail pageNum={pageNumber} width={150} rotation={pageRotations[pageNumber] || null} />}
                             <button type="button" className="split-cut-page-button"
                               onClick={() => toggleRemovedPage(pageNumber)}
                               aria-label={isRemoved ? `Khôi phục trang ${pageNumber}` : `Cắt bỏ trang ${pageNumber}`}
                               title={isRemoved ? 'Bấm để khôi phục trang' : 'Cắt bỏ trang này'}>
                               {isRemoved ? <Undo2 size={18} /> : <Scissors size={18} />}
                             </button>
-                            {isRemoved && <div className="split-removed-label">Đã cắt</div>}
+                            {isRemoved && !insertions[pageNumber] && <div className="split-removed-label">Đã cắt</div>}
+                            {insertions[pageNumber] && <div className="split-inserted-label">Trang mới</div>}
                           </div>
                           <div className="split-page-footer">
                             <span>Trang {pageNumber}</span>
@@ -191,6 +272,29 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
                               <button type="button" disabled={isRemoved} onClick={() => rotatePage(pageNumber, 90)} aria-label={`Xoay phải trang ${pageNumber}`}><RotateCw size={14} /></button>
                             </div>
                           </div>
+                          {isRemoved && (
+                            <div className="split-cut-page-actions">
+                              <button type="button" onClick={() => extractPages([pageNumber], pageNumber)} disabled={extracting !== null}>
+                                {extracting === pageNumber ? <Loader2 size={13} className="spin" /> : <Download size={13} />}
+                                Tải trang này
+                              </button>
+                              {insertions[pageNumber] ? (
+                                <div className="split-inserted-file">
+                                  <span title={insertions[pageNumber].name}>{insertions[pageNumber].name}</span>
+                                  <button type="button" onClick={() => removeInsertedPage(pageNumber)} aria-label={`Bỏ trang chèn tại vị trí ${pageNumber}`}><X size={13} /></button>
+                                </div>
+                              ) : (
+                                <label className="split-insert-page-button">
+                                  <Plus size={13} /> Chèn PDF 1 trang
+                                  <input type="file" accept=".pdf,application/pdf" hidden
+                                    onChange={(event) => {
+                                      setInsertedPage(pageNumber, event.target.files?.[0]);
+                                      event.target.value = '';
+                                    }} />
+                                </label>
+                              )}
+                            </div>
+                          )}
                         </article>
                       );
                     })}

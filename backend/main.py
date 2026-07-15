@@ -498,8 +498,10 @@ async def api_remove_pages(
     file: UploadFile = File(...),
     removed_pages: str = Form(...),
     page_rotations: str = Form(default="{}"),
+    insertion_manifest: str = Form(default="[]"),
+    insert_files: list[UploadFile] | None = File(default=None),
 ):
-    """Remove selected 1-indexed pages and return one PDF in original order."""
+    """Remove pages and optionally insert one-page PDFs at those positions."""
     try:
         import fitz
 
@@ -510,13 +512,31 @@ async def api_remove_pages(
         try:
             requested_pages = json.loads(removed_pages or "[]")
             rotations = json.loads(page_rotations or "{}")
+            requested_insertions = json.loads(insertion_manifest or "[]")
         except (TypeError, ValueError, json.JSONDecodeError):
             raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
-        if not isinstance(requested_pages, list) or not isinstance(rotations, dict):
+        if (not isinstance(requested_pages, list) or not isinstance(rotations, dict)
+                or not isinstance(requested_insertions, list)):
             raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
 
         content = await file.read()
-        source = fitz.open(stream=content, filetype="pdf")
+        insertion_uploads = insert_files or []
+        insertion_docs = []
+        for upload in insertion_uploads:
+            if not (upload.filename or "").lower().endswith(".pdf"):
+                raise HTTPException(status_code=400, detail="Trang chèn mới phải là file PDF.")
+            insertion_doc = fitz.open(stream=await upload.read(), filetype="pdf")
+            if insertion_doc.page_count != 1:
+                insertion_doc.close()
+                raise HTTPException(status_code=400, detail="Mỗi file chèn phải có đúng 1 trang PDF.")
+            insertion_docs.append(insertion_doc)
+
+        try:
+            source = fitz.open(stream=content, filetype="pdf")
+        except Exception:
+            for insertion_doc in insertion_docs:
+                insertion_doc.close()
+            raise
         try:
             total = source.page_count
             try:
@@ -528,19 +548,80 @@ async def api_remove_pages(
                 raise HTTPException(status_code=400, detail="Chưa chọn trang cần cắt bỏ.")
             if any(page < 1 or page > total for page in removed):
                 raise HTTPException(status_code=400, detail="Trang cần cắt nằm ngoài file PDF.")
-            if len(removed) >= total:
+            insertions = {}
+            try:
+                for entry in requested_insertions:
+                    position = int(entry["position"])
+                    file_index = int(entry["file_index"])
+                    if position not in removed or not 0 <= file_index < len(insertion_docs):
+                        raise ValueError
+                    insertions[position] = file_index
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Vị trí chèn trang không hợp lệ.")
+
+            if len(removed) >= total and not insertions:
                 raise HTTPException(status_code=400, detail="Phải giữ lại ít nhất một trang.")
 
             result = fitz.open()
             try:
                 for original_page in range(1, total + 1):
                     if original_page in removed:
-                        continue
-                    result.insert_pdf(source, from_page=original_page - 1, to_page=original_page - 1)
-                    extra_rotation = int(rotations.get(str(original_page), 0)) % 360
-                    if extra_rotation:
-                        output_page = result[result.page_count - 1]
-                        output_page.set_rotation((output_page.rotation + extra_rotation) % 360)
+                        if original_page in insertions:
+                            replacement = insertion_docs[insertions[original_page]]
+                            result.insert_pdf(replacement, from_page=0, to_page=0)
+                    else:
+                        result.insert_pdf(source, from_page=original_page - 1, to_page=original_page - 1)
+                        extra_rotation = int(rotations.get(str(original_page), 0)) % 360
+                        if extra_rotation:
+                            output_page = result[result.page_count - 1]
+                            output_page.set_rotation((output_page.rotation + extra_rotation) % 360)
+                output = result.tobytes()
+            finally:
+                result.close()
+        finally:
+            source.close()
+            for insertion_doc in insertion_docs:
+                insertion_doc.close()
+
+        base = filename.rsplit(".", 1)[0]
+        return StreamingResponse(
+            io.BytesIO(output),
+            media_type="application/pdf",
+            headers={"Content-Disposition": make_safe_filename_header(f"{base}_da_cat_trang.pdf")},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/extract-pages")
+async def api_extract_pages(
+    file: UploadFile = File(...),
+    pages: str = Form(...),
+):
+    """Export selected 1-indexed source pages as a separate PDF."""
+    try:
+        import fitz
+
+        filename = file.filename or "document.pdf"
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file PDF.")
+        try:
+            requested = [int(page) for page in json.loads(pages or "[]")]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
+        if not requested:
+            raise HTTPException(status_code=400, detail="Chưa chọn trang cần xuất.")
+
+        source = fitz.open(stream=await file.read(), filetype="pdf")
+        try:
+            if any(page < 1 or page > source.page_count for page in requested):
+                raise HTTPException(status_code=400, detail="Trang cần xuất nằm ngoài file PDF.")
+            result = fitz.open()
+            try:
+                for page in dict.fromkeys(requested):
+                    result.insert_pdf(source, from_page=page - 1, to_page=page - 1)
                 output = result.tobytes()
             finally:
                 result.close()
@@ -551,7 +632,7 @@ async def api_remove_pages(
         return StreamingResponse(
             io.BytesIO(output),
             media_type="application/pdf",
-            headers={"Content-Disposition": make_safe_filename_header(f"{base}_da_cat_trang.pdf")},
+            headers={"Content-Disposition": make_safe_filename_header(f"{base}_trang_da_cat.pdf")},
         )
     except HTTPException:
         raise
