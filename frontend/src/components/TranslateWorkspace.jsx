@@ -540,6 +540,11 @@ const TranslateWorkspace = () => {
           <span className="translate-filename">{result.original_filename}</span>
           <span className="translate-meta">
             {result.total_pages} trang · {isHtmlMode ? '🟣 Gemini HTML' : (result.translator === 'deepl' ? '🔵 DeepL' : '🟢 Google Translate')}
+            {result.failed_pages?.length > 0 && (
+              <span style={{ color: '#e53e3e', marginLeft: 8 }}>
+                · {result.failed_pages.length} trang chưa dịch được ({result.failed_pages.join(', ')})
+              </span>
+            )}
           </span>
         </div>
         <div className="translate-topbar-right">

@@ -171,26 +171,59 @@ async def api_translate_pdf_html(
             source_text = BeautifulSoup(p.get("html", ""), "html.parser").get_text(" ", strip=True)
             if source_text:
                 structured_pages.append(p)
-        translated_structured = await run_in_threadpool(
-            translate_html_pages,
-            [p["html"] for p in structured_pages],
-        ) if structured_pages else []
-        translated_by_page = {
-            p["page_num"]: translated
-            for p, translated in zip(structured_pages, translated_structured)
-        }
+        translated_by_page = {}
+        try:
+            page_batch_size = max(1, min(int(os.environ.get("TRANSLATION_PAGE_BATCH_SIZE", "8")), 20))
+        except ValueError:
+            page_batch_size = 8
+        for start in range(0, len(structured_pages), page_batch_size):
+            page_batch = structured_pages[start:start + page_batch_size]
+            try:
+                batch_results = await run_in_threadpool(
+                    translate_html_pages,
+                    [p["html"] for p in page_batch],
+                )
+                translated_by_page.update(
+                    (p["page_num"], translated)
+                    for p, translated in zip(page_batch, batch_results)
+                )
+            except TranslationProviderError as batch_error:
+                logger.warning(
+                    "Structured translation batch pages %s-%s failed: %s; retrying page by page",
+                    page_batch[0]["page_num"], page_batch[-1]["page_num"], batch_error,
+                )
+                for source_page in page_batch:
+                    try:
+                        page_result = await run_in_threadpool(
+                            translate_html_pages, [source_page["html"]]
+                        )
+                        translated_by_page[source_page["page_num"]] = page_result[0]
+                    except TranslationProviderError as page_error:
+                        logger.warning(
+                            "Structured translation failed on page %s: %s",
+                            source_page["page_num"], page_error,
+                        )
 
         translated_pages = []
+        failed_pages = []
         for p in pages:
             translated_html = translated_by_page.get(p["page_num"])
             if translated_html is None:
                 # Only pages whose OCR/text extraction genuinely failed use
                 # vision fallback. Never silently return an empty white page.
                 b64 = _extract_pages_as_pdf_b64(content, p["page_num"])
-                translated_html = translate_pdf_page_to_html(b64)
-                if not BeautifulSoup(translated_html, "html.parser").get_text(" ", strip=True):
-                    raise TranslationProviderError(
-                        f"Không đọc được nội dung trang {p['page_num']}; đã dừng để tránh trả trang trắng."
+                try:
+                    translated_html = await run_in_threadpool(translate_pdf_page_to_html, b64)
+                    if not BeautifulSoup(translated_html, "html.parser").get_text(" ", strip=True):
+                        raise TranslationProviderError("Gemini trả về trang trống")
+                except TranslationProviderError as page_error:
+                    logger.warning("Vision translation failed on page %s: %s", p["page_num"], page_error)
+                    failed_pages.append(p["page_num"])
+                    translated_html = (
+                        '<div class="translation-page-warning" style="padding:24px;color:#9b2c2c;'
+                        'font-family:Arial,sans-serif;text-align:center">'
+                        f'Không thể dịch trang {p["page_num"]}. Vui lòng thử lại trang này sau.'
+                        '</div>'
                     )
 
             assets = p.get("preserved_assets", [])
@@ -233,6 +266,7 @@ async def api_translate_pdf_html(
             "total_pages": len(translated_pages),
             "mode": "html",
             "pages": translated_pages,
+            "failed_pages": failed_pages,
         }
     except TranslationConfigurationError as e:
         raise HTTPException(status_code=503, detail=str(e))

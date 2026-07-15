@@ -5,9 +5,13 @@ import re
 import logging
 import os
 import json
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
+_provider_rate_lock = threading.Lock()
+_last_provider_request_at = 0.0
 
 DEFAULT_GEMINI_MODELS = (
     "gemini-2.5-flash",
@@ -123,7 +127,32 @@ def sanitize_translated_html(html: str) -> str:
     return "".join(str(node) for node in soup.contents)
 
 
-def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
+def _wait_for_provider_slot() -> None:
+    """Throttle document calls so large PDFs do not burst through RPM quota."""
+    global _last_provider_request_at
+    try:
+        interval = float(os.environ.get("GEMINI_MIN_REQUEST_INTERVAL_SECONDS", "2.5"))
+    except ValueError:
+        interval = 2.5
+    interval = max(0.0, min(interval, 30.0))
+    with _provider_rate_lock:
+        remaining = interval - (time.monotonic() - _last_provider_request_at)
+        if remaining > 0:
+            time.sleep(remaining)
+        _last_provider_request_at = time.monotonic()
+
+
+def _provider_retry_delay(error: Exception, attempt: int) -> float:
+    message = str(error)
+    match = re.search(r"retry(?:Delay| delay)?[^0-9]{0,20}([0-9]+(?:\.[0-9]+)?)s", message, re.I)
+    provider_delay = float(match.group(1)) if match else 0.0
+    base_delay = min(30.0, 2.0 ** attempt)
+    if "429" in message or "RESOURCE_EXHAUSTED" in message:
+        base_delay = max(base_delay, 5.0)
+    return min(60.0, max(base_delay, provider_delay))
+
+
+def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 5,
                  file_b64: str | None = None, mime_type: str = "application/pdf") -> str:
     import time
     import base64
@@ -133,7 +162,7 @@ def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
     client = genai.Client(
         api_key=api_key,
         http_options=types.HttpOptions(
-            timeout=45_000,
+            timeout=90_000,
             retry_options=types.HttpRetryOptions(attempts=1),
         ),
     )
@@ -153,6 +182,7 @@ def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
     last_err = None
     for attempt in range(retries):
         try:
+            _wait_for_provider_slot()
             response = client.models.generate_content(model=model, contents=contents, config=config)
             return response.text.strip()
         except Exception as e:
@@ -160,7 +190,7 @@ def _call_gemini(model: str, api_key: str, prompt_text: str, retries: int = 3,
             if any(c in str(e) for c in ("400", "404", "INVALID_ARGUMENT")):
                 raise
             if attempt < retries - 1:
-                time.sleep(2 ** attempt)
+                time.sleep(_provider_retry_delay(e, attempt))
     raise last_err
 
 
@@ -326,13 +356,13 @@ def translate_html_pages(html_pages: list[str], api_key: str | None = None,
     )
     if max_workers is None:
         try:
-            max_workers = int(os.environ.get("GEMINI_TRANSLATION_WORKERS", "2"))
+            max_workers = int(os.environ.get("GEMINI_TRANSLATION_WORKERS", "1"))
         except ValueError:
-            max_workers = 2
+            max_workers = 1
     worker_count = min(max(1, max_workers), 4, max(1, len(batches)))
 
-    # Two workers substantially reduce large-document request time while the
-    # small upper bound avoids exhausting Gemini quota with a burst of calls.
+    # Sequential calls are the safe default for API keys with low RPM quota.
+    # Paid deployments can explicitly raise GEMINI_TRANSLATION_WORKERS.
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         list(executor.map(translate_batch, batches))
 
