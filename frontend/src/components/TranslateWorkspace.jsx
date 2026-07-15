@@ -357,6 +357,7 @@ const TranslateWorkspace = () => {
     const restored = restoreEditorSelection();
     if (!restored) return;
 
+    document.execCommand('styleWithCSS', false, true);
     document.execCommand(command, false, value);
     savedEditorRangeRef.current = window.getSelection()?.rangeCount
       ? window.getSelection().getRangeAt(0).cloneRange()
@@ -385,7 +386,18 @@ const TranslateWorkspace = () => {
       if (nearestBlock && editableRoot.contains(nearestBlock)) selectedBlocks.push(nearestBlock);
     }
 
-    selectedBlocks.forEach((block) => { block.style.lineHeight = lineHeight; });
+    selectedBlocks.forEach((block) => {
+      block.style.setProperty('line-height', lineHeight, 'important');
+      block.querySelectorAll('*').forEach((child) => {
+        child.style.setProperty('line-height', 'inherit', 'important');
+      });
+    });
+  };
+
+  const runToolbarAction = (event, action) => {
+    event.preventDefault();
+    event.stopPropagation();
+    action();
   };
 
   const downloadPdf = async () => {
@@ -650,12 +662,16 @@ const TranslateWorkspace = () => {
       </div>
 
       <div className="translate-pager translate-editor-toolbar">
-        <button className="btn btn-outline" onMouseDown={(e) => e.preventDefault()} onClick={() => applyEditorCommand('bold')}>
+        <button
+          type="button"
+          className="btn btn-outline"
+          onMouseDown={(e) => runToolbarAction(e, () => applyEditorCommand('bold'))}
+        >
           <Tag size={14} style={{ marginRight: 6 }} /> Tô đậm
         </button>
-        <button className="btn btn-outline" onMouseDown={(e) => e.preventDefault()} onClick={() => applyLineHeight('1.3')}>Giãn dòng 1.3</button>
-        <button className="btn btn-outline" onMouseDown={(e) => e.preventDefault()} onClick={() => applyLineHeight('1.5')}>Giãn dòng 1.5</button>
-        <button className="btn btn-outline" onMouseDown={(e) => e.preventDefault()} onClick={() => applyLineHeight('1.8')}>Giãn dòng 1.8</button>
+        <button type="button" className="btn btn-outline" onMouseDown={(e) => runToolbarAction(e, () => applyLineHeight('1.3'))}>Giãn dòng 1.3</button>
+        <button type="button" className="btn btn-outline" onMouseDown={(e) => runToolbarAction(e, () => applyLineHeight('1.5'))}>Giãn dòng 1.5</button>
+        <button type="button" className="btn btn-outline" onMouseDown={(e) => runToolbarAction(e, () => applyLineHeight('1.8'))}>Giãn dòng 1.8</button>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" style={{ fontSize: 13, padding: '6px 14px', display: 'flex', gap: 6 }} onClick={downloadDocx}>

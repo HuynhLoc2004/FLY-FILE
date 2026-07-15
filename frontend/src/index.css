@@ -2396,6 +2396,18 @@ a {
   -webkit-text-stroke: 0 transparent !important;
 }
 
+/* Formatting commands must win over Gemini/PDF inline run styles. */
+.translated-page-content-editable b,
+.translated-page-content-editable b *,
+.translated-page-content-editable strong,
+.translated-page-content-editable strong *,
+.translated-page-content-editable [style*="font-weight: bold"],
+.translated-page-content-editable [style*="font-weight: bold"] *,
+.translated-page-content-editable [style*="font-weight: 700"],
+.translated-page-content-editable [style*="font-weight: 700"] * {
+  font-weight: 700 !important;
+}
+
 /* Responsive source rows preserve left/right form structure while allowing
    longer English text to increase row height without overlapping later rows. */
 .translated-page-content:has(.pdf-flow-page) {
