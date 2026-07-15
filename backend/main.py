@@ -493,6 +493,72 @@ async def api_pdf_to_word_download_edited(request: DownloadEditedWordRequest):
 
 
 # ── Split PDF ─────────────────────────────────────────────────────────────────
+@app.post("/api/remove-pages")
+async def api_remove_pages(
+    file: UploadFile = File(...),
+    removed_pages: str = Form(...),
+    page_rotations: str = Form(default="{}"),
+):
+    """Remove selected 1-indexed pages and return one PDF in original order."""
+    try:
+        import fitz
+
+        filename = file.filename or "document.pdf"
+        if not filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Chỉ hỗ trợ file PDF.")
+
+        try:
+            requested_pages = json.loads(removed_pages or "[]")
+            rotations = json.loads(page_rotations or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
+        if not isinstance(requested_pages, list) or not isinstance(rotations, dict):
+            raise HTTPException(status_code=400, detail="Danh sách trang không hợp lệ.")
+
+        content = await file.read()
+        source = fitz.open(stream=content, filetype="pdf")
+        try:
+            total = source.page_count
+            try:
+                removed = {int(page) for page in requested_pages}
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Số trang cần cắt không hợp lệ.")
+
+            if not removed:
+                raise HTTPException(status_code=400, detail="Chưa chọn trang cần cắt bỏ.")
+            if any(page < 1 or page > total for page in removed):
+                raise HTTPException(status_code=400, detail="Trang cần cắt nằm ngoài file PDF.")
+            if len(removed) >= total:
+                raise HTTPException(status_code=400, detail="Phải giữ lại ít nhất một trang.")
+
+            result = fitz.open()
+            try:
+                for original_page in range(1, total + 1):
+                    if original_page in removed:
+                        continue
+                    result.insert_pdf(source, from_page=original_page - 1, to_page=original_page - 1)
+                    extra_rotation = int(rotations.get(str(original_page), 0)) % 360
+                    if extra_rotation:
+                        output_page = result[result.page_count - 1]
+                        output_page.set_rotation((output_page.rotation + extra_rotation) % 360)
+                output = result.tobytes()
+            finally:
+                result.close()
+        finally:
+            source.close()
+
+        base = filename.rsplit(".", 1)[0]
+        return StreamingResponse(
+            io.BytesIO(output),
+            media_type="application/pdf",
+            headers={"Content-Disposition": make_safe_filename_header(f"{base}_da_cat_trang.pdf")},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/split")
 async def api_split(
     file: UploadFile = File(...),
