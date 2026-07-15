@@ -156,6 +156,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
             </div>
           ) : (
             <Document
+              className="split-pdf-document"
               file={file}
               onLoadSuccess={({ numPages }) => setTotalPages(numPages)}
               onLoadError={() => setError('Không đọc được các trang trong file PDF. Vui lòng chọn file khác.')}
