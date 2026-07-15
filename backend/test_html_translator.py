@@ -6,6 +6,7 @@ from services.translation.html_translator import (
     DEFAULT_GEMINI_MODELS,
     TranslationConfigurationError,
     TranslationProviderError,
+    _build_translation_batches,
     get_gemini_api_key,
     get_gemini_models,
     sanitize_translated_html,
@@ -16,6 +17,13 @@ from services.translation.html_translator import (
 
 
 class HtmlTranslatorConfigurationTests(unittest.TestCase):
+    def test_large_documents_are_batched_by_character_count(self):
+        segments = [(0, index, "x" * 600) for index in range(5)]
+
+        batches = _build_translation_batches(segments, max_segments=80, max_chars=1_000)
+
+        self.assertEqual([len(batch) for batch in batches], [1, 1, 1, 1, 1])
+
     def test_missing_api_key_has_actionable_error(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(TranslationConfigurationError, "GEMINI_API_KEY"):
@@ -106,7 +114,9 @@ class HtmlTranslatorConfigurationTests(unittest.TestCase):
             '<div class="pdf-flow-block"><p>VI p3 l1</p></div>',
         ]
 
-        translated = translate_html_pages(pages, api_key="test-key", max_segments_per_batch=2)
+        translated = translate_html_pages(
+            pages, api_key="test-key", max_segments_per_batch=2, max_workers=1
+        )
 
         self.assertEqual(call_gemini.call_count, 3)
         self.assertIn("EN page 1 line 1", translated[0])
@@ -130,7 +140,7 @@ class HtmlTranslatorConfigurationTests(unittest.TestCase):
         ) + "</div>"
 
         translated = translate_html_pages(
-            [html], api_key="test-key", max_segments_per_batch=40
+            [html], api_key="test-key", max_segments_per_batch=40, max_workers=1
         )[0]
 
         self.assertEqual(call_gemini.call_count, 3)

@@ -5,6 +5,7 @@ import re
 import logging
 import os
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -270,9 +271,31 @@ def _apply_html_translations(soup, targets, translated: list[str]) -> str:
     return sanitize_translated_html("".join(str(node) for node in soup.contents))
 
 
+def _build_translation_batches(flattened: list[tuple[int, int, str]],
+                               max_segments: int,
+                               max_chars: int) -> list[list[tuple[int, int, str]]]:
+    """Bound requests by item count and prompt size to avoid truncated JSON."""
+    batches: list[list[tuple[int, int, str]]] = []
+    current: list[tuple[int, int, str]] = []
+    current_chars = 0
+    for item in flattened:
+        item_chars = len(item[2])
+        if current and (len(current) >= max_segments or current_chars + item_chars > max_chars):
+            batches.append(current)
+            current = []
+            current_chars = 0
+        current.append(item)
+        current_chars += item_chars
+    if current:
+        batches.append(current)
+    return batches
+
+
 def translate_html_pages(html_pages: list[str], api_key: str | None = None,
-                         max_segments_per_batch: int = 220) -> list[str]:
-    """Translate many pages in bounded batches while preserving each page DOM."""
+                         max_segments_per_batch: int = 80,
+                         max_chars_per_batch: int = 24_000,
+                         max_workers: int | None = None) -> list[str]:
+    """Translate many pages in small, bounded, fault-isolated batches."""
     key = get_gemini_api_key(api_key)
     prepared = [_prepare_html_page(html) for html in html_pages]
     flattened: list[tuple[int, int, str]] = []
@@ -296,8 +319,22 @@ def translate_html_pages(html_pages: list[str], api_key: str | None = None,
         for (page_index, segment_index, _source), translated_text in zip(batch, translated):
             translated_by_page[page_index][segment_index] = translated_text
 
-    for start in range(0, len(flattened), max_segments_per_batch):
-        translate_batch(flattened[start:start + max_segments_per_batch])
+    batches = _build_translation_batches(
+        flattened,
+        max(1, max_segments_per_batch),
+        max(1_000, max_chars_per_batch),
+    )
+    if max_workers is None:
+        try:
+            max_workers = int(os.environ.get("GEMINI_TRANSLATION_WORKERS", "2"))
+        except ValueError:
+            max_workers = 2
+    worker_count = min(max(1, max_workers), 4, max(1, len(batches)))
+
+    # Two workers substantially reduce large-document request time while the
+    # small upper bound avoids exhausting Gemini quota with a burst of calls.
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        list(executor.map(translate_batch, batches))
 
     results = []
     for (soup, targets, _segments), translated in zip(prepared, translated_by_page):
