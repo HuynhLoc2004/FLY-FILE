@@ -2408,6 +2408,24 @@ a {
   font-weight: 700 !important;
 }
 
+/* The bottom formatting toolbar controls the complete translated preview. */
+.translated-page-content-editable.translation-preview-bold,
+.translated-page-content-editable.translation-preview-bold * {
+  font-weight: 700 !important;
+}
+
+.translated-page-content-editable.translation-preview-line-height,
+.translated-page-content-editable.translation-preview-line-height * {
+  line-height: var(--translation-preview-line-height) !important;
+}
+
+.translate-editor-toolbar .btn.translate-format-active {
+  color: #fff;
+  background: #243b64;
+  border-color: #243b64;
+  box-shadow: 0 0 0 2px rgba(49, 130, 206, 0.22);
+}
+
 /* Responsive source rows preserve left/right form structure while allowing
    longer English text to increase row height without overlapping later rows. */
 .translated-page-content:has(.pdf-flow-page) {

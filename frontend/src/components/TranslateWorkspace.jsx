@@ -50,15 +50,18 @@ const Dropzone = ({ onFiles }) => {
 };
 
 // ── HTML Page Renderer ────────────────────────────────────────────────────────
-const HtmlTranslatedPage = ({ html, pageNum, onHtmlEdit, registerPageRef }) => (
+const HtmlTranslatedPage = ({ html, pageNum, onHtmlEdit, registerPageRef, previewBold, previewLineHeight }) => (
   <div className="translated-page-shell" data-page-number={pageNum}>
     <div className="translated-page-label">Trang {pageNum}</div>
     <div
       ref={(el) => registerPageRef(pageNum, el)}
-      className="translated-page-content translated-page-content-editable"
+      className={`translated-page-content translated-page-content-editable${previewBold ? ' translation-preview-bold' : ''}${previewLineHeight ? ' translation-preview-line-height' : ''}`}
       contentEditable={true}
       suppressContentEditableWarning={true}
-      style={{ color: '#1a202c' }}
+      style={{
+        color: '#1a202c',
+        '--translation-preview-line-height': previewLineHeight || undefined,
+      }}
       onBlur={(e) => onHtmlEdit(pageNum, e.currentTarget.innerHTML)}
       dangerouslySetInnerHTML={{ __html: html }}
     />
@@ -159,6 +162,8 @@ const TranslateWorkspace = () => {
   const [pdfScale, setPdfScale] = useState(1.0);
   const [progress, setProgress] = useState(0);
   const [loadingStep, setLoadingStep] = useState('');
+  const [previewBold, setPreviewBold] = useState(false);
+  const [previewLineHeight, setPreviewLineHeight] = useState(null);
 
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(480);
@@ -262,6 +267,8 @@ const TranslateWorkspace = () => {
     setResult(null);
     setStatus('idle');
     setErrorMsg('');
+    setPreviewBold(false);
+    setPreviewLineHeight(null);
   };
 
   const downloadTranslation = () => {
@@ -341,63 +348,15 @@ const TranslateWorkspace = () => {
     });
   };
 
-  const restoreEditorSelection = () => {
-    const range = savedEditorRangeRef.current;
-    const editableRoot = savedEditorRootRef.current;
-    if (!range || !editableRoot?.isConnected) return null;
+  const formatTranslatedHtml = (html) => {
+    if (!previewBold && !previewLineHeight) return html;
 
-    editableRoot.focus({ preventScroll: true });
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return { range, editableRoot };
-  };
+    const formattingRules = [
+      previewBold ? 'font-weight:700 !important;' : '',
+      previewLineHeight ? `line-height:${previewLineHeight} !important;` : '',
+    ].join('');
 
-  const applyEditorCommand = (command, value = null) => {
-    const restored = restoreEditorSelection();
-    if (!restored) return;
-
-    document.execCommand('styleWithCSS', false, true);
-    document.execCommand(command, false, value);
-    savedEditorRangeRef.current = window.getSelection()?.rangeCount
-      ? window.getSelection().getRangeAt(0).cloneRange()
-      : savedEditorRangeRef.current;
-  };
-
-  const applyLineHeight = (lineHeight) => {
-    const restored = restoreEditorSelection();
-    if (!restored) return;
-    const { range, editableRoot } = restored;
-
-    const blockSelector = 'p, li, td, th, h1, h2, h3, h4, h5, h6';
-    const selectedBlocks = Array.from(editableRoot.querySelectorAll(blockSelector))
-      .filter((block) => {
-        try {
-          return range.intersectsNode(block);
-        } catch {
-          return false;
-        }
-      });
-
-    if (selectedBlocks.length === 0) {
-      let node = range.commonAncestorContainer;
-      if (node.nodeType === Node.TEXT_NODE) node = node.parentElement;
-      const nearestBlock = node?.closest?.(blockSelector);
-      if (nearestBlock && editableRoot.contains(nearestBlock)) selectedBlocks.push(nearestBlock);
-    }
-
-    selectedBlocks.forEach((block) => {
-      block.style.setProperty('line-height', lineHeight, 'important');
-      block.querySelectorAll('*').forEach((child) => {
-        child.style.setProperty('line-height', 'inherit', 'important');
-      });
-    });
-  };
-
-  const runToolbarAction = (event, action) => {
-    event.preventDefault();
-    event.stopPropagation();
-    action();
+    return `<div class="translation-export-format"><style>.translation-export-format,.translation-export-format *{${formattingRules}}</style>${html}</div>`;
   };
 
   const downloadPdf = async () => {
@@ -406,7 +365,7 @@ const TranslateWorkspace = () => {
       const mergedResult = JSON.parse(JSON.stringify(result));
       Object.entries(translatedPageRefs.current).forEach(([pageNum, el]) => {
         const page = mergedResult.pages?.find(p => p.page_num === Number(pageNum));
-        if (page && el) page.translated_html = el.innerHTML;
+        if (page && el) page.translated_html = formatTranslatedHtml(el.innerHTML);
       });
       const res = await fetch(`${API_URL}/api/translate-pdf/download-pdf`, {
         method: 'POST',
@@ -434,7 +393,7 @@ const TranslateWorkspace = () => {
     try {
       const htmlPages = Object.entries(translatedPageRefs.current).map(([pageNum, el]) => ({
         page_num: Number(pageNum),
-        translated_html: el?.innerHTML || '',
+        translated_html: formatTranslatedHtml(el?.innerHTML || ''),
       }));
 
       const mergedResult = JSON.parse(JSON.stringify(result));
@@ -644,6 +603,8 @@ const TranslateWorkspace = () => {
                       pageNum={page.page_num}
                       onHtmlEdit={handleHtmlEdit}
                       registerPageRef={registerPageRef}
+                      previewBold={previewBold}
+                      previewLineHeight={previewLineHeight}
                     />
                   ) : (
                     <div className="translated-page-shell">
@@ -664,14 +625,23 @@ const TranslateWorkspace = () => {
       <div className="translate-pager translate-editor-toolbar">
         <button
           type="button"
-          className="btn btn-outline"
-          onMouseDown={(e) => runToolbarAction(e, () => applyEditorCommand('bold'))}
+          className={`btn btn-outline${previewBold ? ' translate-format-active' : ''}`}
+          aria-pressed={previewBold}
+          onClick={() => setPreviewBold(current => !current)}
         >
           <Tag size={14} style={{ marginRight: 6 }} /> Tô đậm
         </button>
-        <button type="button" className="btn btn-outline" onMouseDown={(e) => runToolbarAction(e, () => applyLineHeight('1.3'))}>Giãn dòng 1.3</button>
-        <button type="button" className="btn btn-outline" onMouseDown={(e) => runToolbarAction(e, () => applyLineHeight('1.5'))}>Giãn dòng 1.5</button>
-        <button type="button" className="btn btn-outline" onMouseDown={(e) => runToolbarAction(e, () => applyLineHeight('1.8'))}>Giãn dòng 1.8</button>
+        {['1.3', '1.5', '1.8'].map(lineHeight => (
+          <button
+            key={lineHeight}
+            type="button"
+            className={`btn btn-outline${previewLineHeight === lineHeight ? ' translate-format-active' : ''}`}
+            aria-pressed={previewLineHeight === lineHeight}
+            onClick={() => setPreviewLineHeight(current => current === lineHeight ? null : lineHeight)}
+          >
+            Giãn dòng {lineHeight}
+          </button>
+        ))}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="btn btn-primary" style={{ fontSize: 13, padding: '6px 14px', display: 'flex', gap: 6 }} onClick={downloadDocx}>
