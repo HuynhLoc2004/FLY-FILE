@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArrowLeft, ArrowRight, CheckCircle2, ChevronDown, Combine, FileCheck2, FileType2, Images, Languages, Minimize2, Repeat2, ShieldCheck, SplitSquareHorizontal, Wand2, Zap } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
@@ -61,6 +61,9 @@ const Home = () => {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isAnimating, setIsAnimating] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isHeroVisible, setIsHeroVisible] = useState(true);
+  const touchStartXRef = useRef(0);
+  const heroRef = useRef(null);
   const toolQuery = searchParams.get('q') || '';
 
   useEffect(() => {
@@ -77,24 +80,38 @@ const Home = () => {
       frameId = window.requestAnimationFrame(() => setIsMobile(window.innerWidth < 640));
     };
     syncViewport();
-    window.addEventListener('resize', syncViewport);
+    window.addEventListener('resize', syncViewport, { passive: true });
     return () => {
       window.cancelAnimationFrame(frameId);
       window.removeEventListener('resize', syncViewport);
     };
   }, []);
 
+  // Pause carousel when hero is offscreen to save mobile CPU/battery
+  useEffect(() => {
+    const node = heroRef.current;
+    if (!node) return undefined;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      setIsHeroVisible(entry.isIntersecting);
+    }, { threshold: 0.1 });
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   useEffect(() => {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion) return undefined;
+    if (reduceMotion || !isHeroVisible) return undefined;
 
+    const intervalTime = isMobile ? 8000 : 4800;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
       setActiveIndex((current) => (current + 1) % heroImages.length);
-    }, isMobile ? 6200 : 4800);
+    }, intervalTime);
 
     return () => window.clearInterval(timer);
-  }, [isMobile]);
+  }, [isMobile, isHeroVisible]);
 
   useEffect(() => {
     if (!toolQuery) return;
@@ -140,7 +157,7 @@ const Home = () => {
   const getHeroImageStyle = (index) => {
     const base = {
       transition: isMobile
-        ? 'transform 360ms cubic-bezier(0.4,0,0.2,1), opacity 360ms cubic-bezier(0.4,0,0.2,1)'
+        ? 'transform 280ms ease-out, opacity 280ms ease-out'
         : 'transform 560ms cubic-bezier(0.4,0,0.2,1), opacity 560ms cubic-bezier(0.4,0,0.2,1), left 560ms cubic-bezier(0.4,0,0.2,1), bottom 560ms cubic-bezier(0.4,0,0.2,1), height 560ms cubic-bezier(0.4,0,0.2,1)',
       willChange: 'transform, opacity',
     };
@@ -151,7 +168,9 @@ const Home = () => {
         left: '50%',
         bottom: isMobile ? '24%' : '2%',
         height: isMobile ? '50%' : '74%',
-        transform: `translateX(-50%) rotateY(0deg) rotateX(0deg) scale(${isMobile ? 1.14 : 1.28})`,
+        transform: isMobile
+          ? 'translateX(-50%) scale(1.12)'
+          : 'translateX(-50%) rotateY(0deg) rotateX(0deg) scale(1.28)',
         opacity: 1,
         zIndex: 20,
       };
@@ -163,8 +182,10 @@ const Home = () => {
         left: isMobile ? '22%' : '30%',
         bottom: isMobile ? '35%' : '16%',
         height: isMobile ? '19%' : '30%',
-        transform: 'translateX(-50%) rotateY(42deg) rotateZ(-7deg) scale(0.92)',
-        opacity: 0.82,
+        transform: isMobile
+          ? 'translateX(-50%) scale(0.84)'
+          : 'translateX(-50%) rotateY(42deg) rotateZ(-7deg) scale(0.92)',
+        opacity: 0.75,
         zIndex: 10,
       };
     }
@@ -174,18 +195,40 @@ const Home = () => {
       left: isMobile ? '78%' : '70%',
       bottom: isMobile ? '35%' : '16%',
       height: isMobile ? '19%' : '30%',
-      transform: 'translateX(-50%) rotateY(-42deg) rotateZ(7deg) scale(0.92)',
-      opacity: 0.82,
+      transform: isMobile
+        ? 'translateX(-50%) scale(0.84)'
+        : 'translateX(-50%) rotateY(-42deg) rotateZ(7deg) scale(0.92)',
+      opacity: 0.75,
       zIndex: 10,
     };
+  };
+
+  const handleTouchStart = (e) => {
+    if (e.touches?.[0]) {
+      touchStartXRef.current = e.touches[0].clientX;
+    }
+  };
+
+  const handleTouchEnd = (e) => {
+    if (e.changedTouches?.[0]) {
+      const diff = e.changedTouches[0].clientX - touchStartXRef.current;
+      if (diff > 45) {
+        navigateHero('prev');
+      } else if (diff < -45) {
+        navigateHero('next');
+      }
+    }
   };
 
   return (
     <div className="home-page">
       <section
         id="hero"
+        ref={heroRef}
         className="file-hero"
         style={{ backgroundColor: heroImages[activeIndex].bg }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
       >
         <div className="file-hero-grain" />
         <div className="file-hero-brand">Fly FILE</div>

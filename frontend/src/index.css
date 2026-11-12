@@ -4982,3 +4982,89 @@ body {
     display: none;
   }
 }
+
+/* ============================================================
+   MOBILE HIGH-PERFORMANCE & SMOOTH SCROLL OPTIMIZATION
+   ============================================================ */
+@media (max-width: 768px), (pointer: coarse) {
+  /* 1. Eliminate heavy background repaint during scroll */
+  body {
+    background-attachment: scroll !important;
+  }
+
+  /* 2. Optimize main content container scroll */
+  .main-content {
+    -webkit-overflow-scrolling: touch !important;
+    scroll-behavior: auto !important;
+    contain: paint;
+  }
+
+  /* 3. Disable heavy SVG turbulence grain filter and perpetual orbit loops */
+  .file-hero-grain,
+  .file-hero-orbit,
+  .file-hero-orbit-one,
+  .file-hero-orbit-two {
+    display: none !important;
+    animation: none !important;
+  }
+
+  /* 4. Disable heavy 3D transforms & perspective on mobile */
+  .file-hero {
+    perspective: none !important;
+  }
+
+  .file-hero-carousel,
+  .file-hero-image-wrap {
+    transform-style: flat !important;
+  }
+
+  .file-hero-image-wrap {
+    will-change: transform, opacity !important;
+  }
+
+  /* 5. Strip blur & expensive backdrop-filter on mobile */
+  .top-header,
+  .header-nav,
+  .header-nav-panel,
+  .mobile-nav-sheet,
+  .tool-card,
+  .home-highlight,
+  .dropzone,
+  .workspace-toolbar,
+  .file-hero-scroll-cue {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .file-hero::before {
+    display: none !important;
+  }
+
+  .file-hero-panel {
+    box-shadow: none !important;
+  }
+
+  /* 6. Streamline card shadows and hover state for touch */
+  .tool-card {
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06) !important;
+    transform: none !important;
+    transition: transform 0.15s ease !important;
+  }
+
+  .tool-card:active {
+    transform: scale(0.98) !important;
+  }
+
+  /* 7. Virtualize off-screen sections (instant rendering & no lag) */
+  #tools {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 750px;
+  }
+
+  .home-highlight-list,
+  .home-workflow {
+    content-visibility: auto;
+    contain-intrinsic-size: 1px 280px;
+  }
+}
+
