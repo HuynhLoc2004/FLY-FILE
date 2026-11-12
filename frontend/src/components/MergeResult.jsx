@@ -3,10 +3,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { Download, ChevronLeft, ChevronRight, RefreshCw, ChevronDown, Printer, Trash2, CheckCircle2, Edit2, Loader2 } from 'lucide-react';
 import { API_URL } from '../config/api';
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const MergeResult = ({ blob, initialName = 'merged', onRestart }) => {
   const [fileName, setFileName] = useState(initialName);

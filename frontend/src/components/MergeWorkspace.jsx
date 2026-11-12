@@ -421,7 +421,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
           ))}
           <div className="add-more-card" onClick={() => document.getElementById('add-more-input').click()}>
             <div className="add-icon"><Plus size={20} /></div>
-            <div>Thêm các file PDF,<br />hình ảnh, Word, Excel...</div>
+            <div>Thêm các file PDF<br />vào đây...</div>
           </div>
         </div>
       )}

@@ -3,11 +3,8 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-// Use Vite's new URL() so the worker is bundled from node_modules — no CDN needed
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString();
+// Use unpkg CDN worker matching react-pdf's bundled pdfjs version
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const PdfRenderer = ({ file, pageNum = 1, scale = 1.0, onDocumentLoad, rotation = null, width, lazy = true }) => {
   const wrapperRef = useRef(null);
