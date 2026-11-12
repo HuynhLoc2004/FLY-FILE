@@ -77,7 +77,9 @@ const Home = () => {
     let frameId = 0;
     const syncViewport = () => {
       window.cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(() => setIsMobile(window.innerWidth < 640));
+      frameId = window.requestAnimationFrame(() => {
+        setIsMobile(window.innerWidth < 992 || window.matchMedia('(pointer: coarse)').matches);
+      });
     };
     syncViewport();
     window.addEventListener('resize', syncViewport, { passive: true });
@@ -102,13 +104,13 @@ const Home = () => {
 
   useEffect(() => {
     const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduceMotion || !isHeroVisible) return undefined;
+    // On mobile / touch devices, disable auto-play carousel to eliminate background re-renders & scroll lag
+    if (reduceMotion || !isHeroVisible || isMobile) return undefined;
 
-    const intervalTime = isMobile ? 8000 : 4800;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
       setActiveIndex((current) => (current + 1) % heroImages.length);
-    }, intervalTime);
+    }, 4800);
 
     return () => window.clearInterval(timer);
   }, [isMobile, isHeroVisible]);
@@ -155,10 +157,44 @@ const Home = () => {
   };
 
   const getHeroImageStyle = (index) => {
+    if (isMobile) {
+      if (index === roles.center) {
+        return {
+          left: '50%',
+          bottom: '20%',
+          height: '52%',
+          transform: 'translateX(-50%) translateZ(0) scale(1.08)',
+          opacity: 1,
+          zIndex: 20,
+          transition: 'transform 240ms ease-out, opacity 240ms ease-out',
+        };
+      }
+
+      if (index === roles.left) {
+        return {
+          left: '20%',
+          bottom: '30%',
+          height: '24%',
+          transform: 'translateX(-50%) translateZ(0) scale(0.85)',
+          opacity: 0.65,
+          zIndex: 10,
+          transition: 'transform 240ms ease-out, opacity 240ms ease-out',
+        };
+      }
+
+      return {
+        left: '80%',
+        bottom: '30%',
+        height: '24%',
+        transform: 'translateX(-50%) translateZ(0) scale(0.85)',
+        opacity: 0.65,
+        zIndex: 10,
+        transition: 'transform 240ms ease-out, opacity 240ms ease-out',
+      };
+    }
+
     const base = {
-      transition: isMobile
-        ? 'transform 280ms ease-out, opacity 280ms ease-out'
-        : 'transform 560ms cubic-bezier(0.4,0,0.2,1), opacity 560ms cubic-bezier(0.4,0,0.2,1), left 560ms cubic-bezier(0.4,0,0.2,1), bottom 560ms cubic-bezier(0.4,0,0.2,1), height 560ms cubic-bezier(0.4,0,0.2,1)',
+      transition: 'transform 560ms cubic-bezier(0.4,0,0.2,1), opacity 560ms cubic-bezier(0.4,0,0.2,1), left 560ms cubic-bezier(0.4,0,0.2,1), bottom 560ms cubic-bezier(0.4,0,0.2,1), height 560ms cubic-bezier(0.4,0,0.2,1)',
       willChange: 'transform, opacity',
     };
 
@@ -166,11 +202,9 @@ const Home = () => {
       return {
         ...base,
         left: '50%',
-        bottom: isMobile ? '24%' : '2%',
-        height: isMobile ? '50%' : '74%',
-        transform: isMobile
-          ? 'translateX(-50%) scale(1.12)'
-          : 'translateX(-50%) rotateY(0deg) rotateX(0deg) scale(1.28)',
+        bottom: '2%',
+        height: '74%',
+        transform: 'translateX(-50%) rotateY(0deg) rotateX(0deg) scale(1.28)',
         opacity: 1,
         zIndex: 20,
       };
@@ -179,12 +213,10 @@ const Home = () => {
     if (index === roles.left) {
       return {
         ...base,
-        left: isMobile ? '22%' : '30%',
-        bottom: isMobile ? '35%' : '16%',
-        height: isMobile ? '19%' : '30%',
-        transform: isMobile
-          ? 'translateX(-50%) scale(0.84)'
-          : 'translateX(-50%) rotateY(42deg) rotateZ(-7deg) scale(0.92)',
+        left: '30%',
+        bottom: '16%',
+        height: '30%',
+        transform: 'translateX(-50%) rotateY(42deg) rotateZ(-7deg) scale(0.92)',
         opacity: 0.75,
         zIndex: 10,
       };
@@ -192,12 +224,10 @@ const Home = () => {
 
     return {
       ...base,
-      left: isMobile ? '78%' : '70%',
-      bottom: isMobile ? '35%' : '16%',
-      height: isMobile ? '19%' : '30%',
-      transform: isMobile
-        ? 'translateX(-50%) scale(0.84)'
-        : 'translateX(-50%) rotateY(-42deg) rotateZ(7deg) scale(0.92)',
+      left: '70%',
+      bottom: '16%',
+      height: '30%',
+      transform: 'translateX(-50%) rotateY(-42deg) rotateZ(7deg) scale(0.92)',
       opacity: 0.75,
       zIndex: 10,
     };

@@ -57,17 +57,20 @@ const Layout = ({ children }) => {
   }, [moreOpen]);
 
   useEffect(() => {
-    const mainContent = document.querySelector('.main-content');
-    if (!mainContent) return undefined;
-
     const handleScroll = () => {
-      setShowScrollTop(mainContent.scrollTop > 260);
+      const top = window.scrollY || document.documentElement.scrollTop || document.querySelector('.main-content')?.scrollTop || 0;
+      setShowScrollTop(top > 240);
     };
 
     handleScroll();
-    mainContent.addEventListener('scroll', handleScroll, { passive: true });
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) mainContent.addEventListener('scroll', handleScroll, { passive: true });
 
-    return () => mainContent.removeEventListener('scroll', handleScroll);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      if (mainContent) mainContent.removeEventListener('scroll', handleScroll);
+    };
   }, []);
 
   const updateToolSearch = (value) => {
@@ -214,7 +217,10 @@ const Layout = ({ children }) => {
         className={`scroll-to-top-btn ${showScrollTop ? 'show' : ''}`}
         type="button"
         aria-label="Lên đầu trang"
-        onClick={() => document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' })}
+        onClick={() => {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       >
         <ArrowUp size={20} strokeWidth={2.4} />
       </button>

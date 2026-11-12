@@ -5145,33 +5145,73 @@ body {
 }
 
 /* ============================================================
-   MOBILE HIGH-PERFORMANCE & SMOOTH SCROLL OPTIMIZATION
+   MOBILE HIGH-PERFORMANCE & NATIVE SMOOTH SCROLL OPTIMIZATION
    ============================================================ */
-@media (max-width: 768px), (pointer: coarse) {
-  /* 1. Eliminate heavy background repaint during scroll */
+@media (max-width: 991px), (pointer: coarse) {
+  /* 1. Switch to native window / document scrolling for 120fps hardware acceleration */
+  html,
   body {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-behavior: auto !important;
     background-attachment: scroll !important;
   }
 
-  /* 2. Optimize main content container scroll */
-  .main-content {
-    -webkit-overflow-scrolling: touch !important;
-    scroll-behavior: auto !important;
-    contain: paint;
+  #root,
+  .app-container {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow: visible !important;
+    display: block !important;
+    padding: 0 !important;
   }
 
-  /* 3. Disable heavy SVG turbulence grain filter and perpetual orbit loops */
+  .main-content {
+    height: auto !important;
+    min-height: 100dvh !important;
+    overflow: visible !important;
+    overflow-y: visible !important;
+    border-radius: 0 !important;
+    border: none !important;
+    scroll-behavior: auto !important;
+    contain: none !important;
+  }
+
+  /* 2. Top Header: Solid color, no heavy backdrop-filter blur */
+  .top-header {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 120 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: #090d16 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+    transform: translateZ(0);
+  }
+
+  /* 3. Strip all expensive SVG turbulence filters, orbits, and decorative 3D layers */
   .file-hero-grain,
   .file-hero-orbit,
   .file-hero-orbit-one,
-  .file-hero-orbit-two {
+  .file-hero-orbit-two,
+  .file-hero-panel,
+  .file-hero-ghost,
+  .file-hero::before,
+  .file-hero::after {
     display: none !important;
     animation: none !important;
   }
 
-  /* 4. Disable heavy 3D transforms & perspective on mobile */
   .file-hero {
     perspective: none !important;
+    transition: none !important;
+    min-height: auto !important;
+    padding-top: 24px !important;
+    padding-bottom: 32px !important;
   }
 
   .file-hero-carousel,
@@ -5179,53 +5219,42 @@ body {
     transform-style: flat !important;
   }
 
-  .file-hero-image-wrap {
-    will-change: transform, opacity !important;
-  }
-
-  /* 5. Strip blur & expensive backdrop-filter on mobile */
-  .top-header,
+  /* 4. Strip blur & expensive backdrop-filter across all elements on mobile */
   .header-nav,
   .header-nav-panel,
   .mobile-nav-sheet,
   .tool-card,
   .home-highlight,
   .dropzone,
+  .translate-dropzone,
   .workspace-toolbar,
-  .file-hero-scroll-cue {
+  .file-hero-scroll-cue,
+  .sidebar,
+  .file-card,
+  .page-card,
+  .preview-modal-content,
+  .result-actions-panel,
+  .translated-page-content,
+  .translate-loading-card,
+  .loading-mini-card,
+  .translate-result-topbar {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
   }
 
-  .file-hero::before {
-    display: none !important;
-  }
-
-  .file-hero-panel {
-    box-shadow: none !important;
-  }
-
-  /* 6. Streamline card shadows and hover state for touch */
+  /* 5. Streamline card shadows and fast touch feedback */
   .tool-card {
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06) !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16) !important;
     transform: none !important;
-    transition: transform 0.15s ease !important;
+    transition: transform 0.12s ease !important;
   }
 
   .tool-card:active {
     transform: scale(0.98) !important;
   }
 
-  /* 7. Virtualize off-screen sections (instant rendering & no lag) */
-  #tools {
-    content-visibility: auto;
-    contain-intrinsic-size: 1px 750px;
-  }
-
-  .home-highlight-list,
-  .home-workflow {
-    content-visibility: auto;
-    contain-intrinsic-size: 1px 280px;
+  .tool-card::before {
+    display: none !important;
   }
 }
 
