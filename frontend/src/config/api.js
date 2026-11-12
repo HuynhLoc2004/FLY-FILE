@@ -1,5 +1,13 @@
-const productionApiUrl = 'https://flyfile-backend-production-4bb2.up.railway.app';
+const rawApiUrl = (import.meta.env.VITE_API_URL || '').trim();
 
-export const API_URL = import.meta.env.VITE_API_URL || (
-  import.meta.env.PROD ? productionApiUrl : 'http://localhost:8000'
-);
+// Normalize: remove trailing slash if present
+export const API_URL = rawApiUrl
+  ? rawApiUrl.replace(/\/+$/, '')
+  : (import.meta.env.PROD ? '' : 'http://localhost:8000');
+
+if (import.meta.env.PROD && !rawApiUrl) {
+  console.warn(
+    '[Fly FILE] Warning: VITE_API_URL environment variable is not defined. ' +
+    'Please set VITE_API_URL in your Vercel Project Settings (e.g., https://your-backend.onrender.com).'
+  );
+}

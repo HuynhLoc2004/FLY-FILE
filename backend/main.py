@@ -44,13 +44,28 @@ async def root():
 async def health_check():
     return {"status": "ok"}
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS configuration
+# When allow_credentials=True, browsers reject wildcard "*" origins.
+# Using allow_origin_regex allows any HTTP/HTTPS origin (localhost, Vercel preview/production domains)
+# while properly returning the caller's origin header.
+cors_origins_env = os.environ.get("CORS_ORIGINS", "").strip()
+if cors_origins_env and cors_origins_env != "*":
+    allowed_origins = [orig.strip() for orig in cors_origins_env.split(",") if orig.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://.*",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 @app.post("/api/merge")
 async def api_merge(

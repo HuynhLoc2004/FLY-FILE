@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: fly-file-backend
+    runtime: python
+    rootDir: backend
+    plan: free
+    region: singapore
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODELS
+        value: gemini-2.5-flash
+      - key: GEMINI_TRANSLATION_WORKERS
+        value: "1"
+      - key: GEMINI_MIN_REQUEST_INTERVAL_SECONDS
+        value: "2.5"
+      - key: TRANSLATION_PAGE_BATCH_SIZE
+        value: "8"
+      - key: CORS_ORIGINS
+        value: "*"

@@ -125,6 +125,38 @@ npm run dev
 
 ---
 
+## 🌐 Hướng Dẫn Deploy Production (Render + Vercel)
+
+Dự án được cấu hình sẵn để deploy hoàn toàn miễn phí trên kiến trúc tách rời Frontend & Backend:
+
+### Bước 1: Deploy Backend lên Render (Render.com)
+
+1. Đăng nhập vào [Render.com](https://render.com) và chọn **New +** -> **Web Service** (hoặc dùng **Blueprints** liên kết tới file `render.yaml`).
+2. Kết nối tới repository `HuynhLoc2004/FLY-FILE`.
+3. Điền các thông số:
+   - **Root Directory**: `backend`
+   - **Runtime**: `Python 3`
+   - **Build Command**: `pip install --upgrade pip && pip install -r requirements.txt`
+   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+4. Vào mục **Environment Variables** thêm các biến:
+   - `GEMINI_API_KEY`: *(Khóa Gemini API của bạn)*
+   - `GEMINI_MODELS`: `gemini-2.5-flash`
+   - `CORS_ORIGINS`: `*` *(hoặc điền domain Vercel sau khi deploy)*
+5. Bấm **Deploy**. Sau khi hoàn tất, copy URL backend được cấp (ví dụ: `https://fly-file-backend.onrender.com`).
+
+### Bước 2: Deploy Frontend lên Vercel (Vercel.com)
+
+1. Đăng nhập vào [Vercel.com](https://vercel.com) và chọn **Add New...** -> **Project**.
+2. Chọn repository `HuynhLoc2004/FLY-FILE`.
+3. Trong phần cấu hình dự án:
+   - **Root Directory**: Chọn `frontend` (hoặc để mặc định, dự án đã có file `vercel.json` định tuyến SPA).
+   - **Framework Preset**: `Vite` (Vercel sẽ tự động nhận diện).
+4. Trong mục **Environment Variables**:
+   - Thêm `VITE_API_URL` = URL backend Render vừa tạo ở Bước 1 (ví dụ: `https://fly-file-backend.onrender.com`).
+5. Bấm **Deploy**. Trang web sẽ được phát hành chỉ sau 1 phút!
+
+---
+
 ## 🎯 Điểm Nhấn Kỹ Thuật (CV Highlights)
 
 - **Asynchronous & Streaming Pipeline**: Ứng dụng kiến trúc bất đồng bộ với FastAPI `StreamingResponse` giúp tối ưu dung lượng RAM khi xử lý các file tài liệu dung lượng lớn.
