@@ -140,12 +140,12 @@ const Layout = ({ children }) => {
           </nav>
 
           <div className="top-header-actions">
-            <label className="top-header-search" aria-label="Tìm công cụ">
+            <label className={`top-header-search ${searchValue ? 'has-value' : ''}`} aria-label="Tìm công cụ">
               <Search size={15} />
               <input
                 type="search"
                 value={searchValue}
-                placeholder="Tìm công cụ"
+                placeholder="Tìm công cụ..."
                 onChange={(event) => updateToolSearch(event.target.value)}
               />
               {searchValue && (
