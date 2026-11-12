@@ -106,7 +106,7 @@ def convert_word_bytes_to_pdf_bytes(word_bytes: bytes) -> bytes:
     document_html = _html_document(result.value)
     output = io.BytesIO()
     status = pisa.CreatePDF(
-        io.StringIO(document_html),
+        io.BytesIO(document_html.encode("utf-8")),
         dest=output,
         encoding="utf-8",
     )
