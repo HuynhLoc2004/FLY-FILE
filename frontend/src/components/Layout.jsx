@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Archive, ArrowUp, ChevronDown, Combine, FileCheck2, FileType2, FolderKanban, Images, Languages, Menu, Minimize2, PlaneTakeoff, Repeat2, Search, Sparkles, SplitSquareHorizontal, X } from 'lucide-react';
+import { Archive, ArrowUp, ChevronDown, Combine, FileCheck2, FileType2, FolderKanban, Images, Languages, Menu, Minimize2, Repeat2, Search, Sparkles, SplitSquareHorizontal, X } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import BrandLogo from './BrandLogo';
 
 const navItems = [
   { id: 'home', icon: <FolderKanban size={18} />, label: 'Bàn file', desc: 'Tổng quan', path: '/' },
@@ -89,8 +90,7 @@ const Layout = ({ children }) => {
         <header className={`top-header ${menuOpen ? 'menu-open' : ''}`}>
           <div className="top-header-brand-block">
             <NavLink to="/" className="top-header-logo" aria-label="Fly FILE">
-              <span><PlaneTakeoff size={19} /></span>
-              <strong>Fly FILE</strong>
+              <BrandLogo size={32} showText={true} />
             </NavLink>
             <div className="top-header-kicker">
               <Sparkles size={14} />

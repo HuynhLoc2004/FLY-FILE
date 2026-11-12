@@ -1,5 +1,6 @@
-import { Archive, Combine, FileCheck2, FileType2, FolderKanban, Images, Languages, Minimize2, Plane, Repeat2, SplitSquareHorizontal } from 'lucide-react';
+import { Archive, Combine, FileCheck2, FileType2, FolderKanban, Images, Languages, Minimize2, Repeat2, SplitSquareHorizontal } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import BrandLogo from './BrandLogo';
 
 const Sidebar = () => {
   const location = useLocation();
@@ -19,11 +20,7 @@ const Sidebar = () => {
   return (
     <div className="sidebar">
       <div className="sidebar-logo">
-        <div className="sidebar-logo-mark"><Plane size={21} /></div>
-        <div>
-          <div className="sidebar-logo-title">Fly FILE</div>
-          <div className="sidebar-logo-sub">File cockpit</div>
-        </div>
+        <BrandLogo size={36} showText={true} />
       </div>
       <div className="sidebar-menu">
         <div className="sidebar-menu-head">
