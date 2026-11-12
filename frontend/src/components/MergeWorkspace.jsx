@@ -7,6 +7,8 @@ import {
 import PdfRenderer from './PdfRenderer';
 import MergeResult from './MergeResult';
 import { API_URL } from '../config/api';
+import ProcessingModal from './ProcessingModal';
+import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
 let nextFileId = 1;
 
@@ -92,6 +94,19 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
   const [mergeError, setMergeError] = useState(null);
   const [mergeResult, setMergeResult] = useState(null); // { blob, name }
   const [draggedId, setDraggedId] = useState(null);
+
+  const {
+    progress,
+    isProcessing,
+    stepText,
+    startProgress,
+    finishProgress,
+    resetProgress,
+  } = useProcessingProgress({
+    20: 'Đang tải lên và kiểm tra tính toàn vẹn các file PDF...',
+    40: 'Đang ghép nối các luồng dữ liệu & xoay trang...',
+    75: 'Đang nén tối ưu và tạo file PDF hoàn chỉnh...',
+  });
 
   // ── Switch to page view: expand all files into individual pages ───────────
   const enterPageView = () => {
@@ -218,6 +233,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
     }
 
     setIsMerging(true);
+    startProgress(viewMode === 'files' ? `Đang gộp ${files.length} file PDF...` : `Đang ghép ${pages.filter(p => p.selected).length} trang PDF...`);
     try {
       let blob;
 
@@ -262,11 +278,14 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
 
       // Use first file name as default output name
       const defaultName = (viewMode === 'files' ? files[0]?.name : pages.find(p => p.selected)?.fileName) || 'merged';
-      setMergeResult({ blob, name: defaultName });
+      finishProgress(() => {
+        setMergeResult({ blob, name: defaultName });
+        setIsMerging(false);
+      });
     } catch (err) {
-      setMergeError(`Gộp thất bại: ${err.message}`);
-    } finally {
+      resetProgress();
       setIsMerging(false);
+      setMergeError(`Gộp thất bại: ${err.message}`);
     }
   };
 
@@ -499,6 +518,15 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
           </div>
         </div>
       )}
+
+      {/* ── Processing Modal with % Progress ── */}
+      <ProcessingModal
+        isOpen={isProcessing}
+        progress={progress}
+        title="Đang gộp tài liệu PDF..."
+        fileName={viewMode === 'files' ? `${files.length} file PDF đã chọn` : `${pages.filter(p => p.selected).length} trang PDF đã chọn`}
+        stepText={stepText}
+      />
     </div>
   );
 };

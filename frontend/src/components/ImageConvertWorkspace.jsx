@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react';
 import { Upload, RefreshCw, Loader2, ArrowLeftRight } from 'lucide-react';
 import { API_URL } from '../config/api';
+import ProcessingModal from './ProcessingModal';
+import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
 // Used for both Image→PDF and Image format conversion (JPG↔PNG etc.)
 const ImageConvertWorkspace = ({ mode = 'convert', onCancel }) => {
@@ -10,6 +12,19 @@ const ImageConvertWorkspace = ({ mode = 'convert', onCancel }) => {
   const [error, setError] = useState('');
   const inputRef = useRef(null);
 
+  const {
+    progress,
+    isProcessing,
+    stepText,
+    startProgress,
+    finishProgress,
+    resetProgress,
+  } = useProcessingProgress({
+    25: mode === 'to-pdf' ? 'Đang đọc và chuẩn hóa kích thước các ảnh...' : 'Đang giải mã điểm ảnh...',
+    60: mode === 'to-pdf' ? 'Đang căn chỉnh tỷ lệ và ghép vào các trang PDF...' : 'Đang chuyển đổi bảng màu & nén định dạng mới...',
+    85: 'Đang hoàn tất và đóng gói file...',
+  });
+
   const accept = mode === 'to-pdf' ? 'image/*' : 'image/*';
   const multi = mode === 'to-pdf';
 
@@ -18,6 +33,7 @@ const ImageConvertWorkspace = ({ mode = 'convert', onCancel }) => {
   const convert = async () => {
     if (!files.length) return;
     setStatus('loading'); setError('');
+    startProgress(mode === 'to-pdf' ? `Đang đóng gói ${files.length} ảnh sang PDF...` : 'Đang chuyển đổi định dạng ảnh...');
     try {
       if (mode === 'to-pdf') {
         const form = new FormData();
@@ -43,8 +59,11 @@ const ImageConvertWorkspace = ({ mode = 'convert', onCancel }) => {
           a.click();
         }
       }
-      setStatus('done');
+      finishProgress(() => {
+        setStatus('done');
+      });
     } catch (e) {
+      resetProgress();
       setError(e.message); setStatus('error');
     }
   };
@@ -101,6 +120,14 @@ const ImageConvertWorkspace = ({ mode = 'convert', onCancel }) => {
 
       {status === 'done' && <p style={{ color: '#38a169', marginTop: 12, fontSize: 13 }}>✓ Đã tải về thành công!</p>}
       {error && <p style={{ color: '#e53e3e', marginTop: 12, fontSize: 13 }}>{error}</p>}
+
+      <ProcessingModal
+        isOpen={isProcessing}
+        progress={progress}
+        title={mode === 'to-pdf' ? 'Đang đóng gói Hình ảnh sang PDF...' : 'Đang chuyển đổi định dạng ảnh...'}
+        fileName={files.length > 0 ? `${files.length} ảnh đã chọn` : ''}
+        stepText={stepText}
+      />
     </div>
   );
 };

@@ -1,21 +1,37 @@
 import { useState, useRef } from 'react';
 import { Upload, Download, Image as ImageIcon, RefreshCw, Loader2 } from 'lucide-react';
 import { API_URL } from '../config/api';
+import ProcessingModal from './ProcessingModal';
+import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
 
 const PdfToImageWorkspace = ({ initialFiles, onCancel }) => {
   const [file, setFile] = useState(initialFiles?.[0] || null);
   const [fmt, setFmt] = useState('png');
   const [dpi, setDpi] = useState(150);
-  const [status, setStatus] = useState(file ? 'idle' : 'idle');
+  const [status, setStatus] = useState('idle');
   const [images, setImages] = useState([]);
   const [error, setError] = useState('');
   const inputRef = useRef(null);
+
+  const {
+    progress,
+    isProcessing,
+    stepText,
+    startProgress,
+    finishProgress,
+    resetProgress,
+  } = useProcessingProgress({
+    20: 'Đang giải mã các trang trong tài liệu PDF...',
+    50: 'Đang render từng trang thành hình ảnh sắc nét...',
+    80: 'Đang tối ưu độ phân giải DPI và đóng gói...',
+  });
 
   const convert = async (f = file) => {
     if (!f) return;
     setStatus('loading');
     setError('');
+    startProgress('Bắt đầu chuyển đổi PDF sang ảnh...');
     try {
       const form = new FormData();
       form.append('file', f);
@@ -24,9 +40,12 @@ const PdfToImageWorkspace = ({ initialFiles, onCancel }) => {
       const res = await fetch(`${API_URL}/api/pdf-to-images`, { method: 'POST', body: form });
       if (!res.ok) throw new Error((await res.json()).detail || 'Lỗi chuyển đổi');
       const data = await res.json();
-      setImages(data.images);
-      setStatus('done');
+      finishProgress(() => {
+        setImages(data.images);
+        setStatus('done');
+      });
     } catch (e) {
+      resetProgress();
       setError(e.message);
       setStatus('error');
     }
@@ -106,6 +125,14 @@ const PdfToImageWorkspace = ({ initialFiles, onCancel }) => {
           ))}
         </div>
       )}
+
+      <ProcessingModal
+        isOpen={isProcessing}
+        progress={progress}
+        title="Đang chuyển đổi PDF sang Hình ảnh..."
+        fileName={file?.name}
+        stepText={stepText}
+      />
     </div>
   );
 };

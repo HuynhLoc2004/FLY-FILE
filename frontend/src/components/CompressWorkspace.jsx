@@ -2,12 +2,12 @@ import { useState } from "react";
 import {
   FileDown,
   RefreshCw,
-  Loader2,
   Minimize2,
   Settings,
   Zap,
 } from "lucide-react";
 import { API_URL } from "../config/api";
+import ProcessingModal from "./ProcessingModal";
 
 const CompressWorkspace = ({ initialFiles, onCancel }) => {
   const file = initialFiles[0]; // Compress tool processes 1 file at a time
@@ -157,70 +157,19 @@ const CompressWorkspace = ({ initialFiles, onCancel }) => {
   // ── Loading Status ──────────────────────────────────────────────────────────
   if (status === "loading") {
     return (
-      <div
-        style={{
-          maxWidth: 500,
-          margin: "80px auto",
-          padding: 30,
-          background: "#fff",
-          borderRadius: 12,
-          boxShadow: "0 4px 20px rgba(0,0,0,0.08)",
-          textAlign: "center",
-        }}
-      >
-        <Loader2
-          size={40}
-          className="spin"
-          style={{
-            color: "#3182ce",
-            animation: "spin 1.5s linear infinite",
-            margin: "0 auto 20px",
-          }}
-        />
-        <h3
-          style={{
-            fontSize: 18,
-            fontWeight: 600,
-            color: "#2d3748",
-            marginBottom: 8,
-          }}
-        >
-          Đang tối ưu dung lượng PDF...
-        </h3>
-        <p
-          style={{
-            fontSize: 13,
-            color: "#718096",
-            wordBreak: "break-all",
-            marginBottom: 24,
-          }}
-        >
-          {file.name}
-        </p>
-        <div
-          style={{
-            width: "100%",
-            height: 10,
-            background: "#edf2f7",
-            borderRadius: 5,
-            overflow: "hidden",
-            marginBottom: 12,
-          }}
-        >
-          <div
-            style={{
-              width: `${progress}%`,
-              height: "100%",
-              background: "linear-gradient(90deg, #3182ce, #319795)",
-              transition: "width 0.2s ease-out",
-              borderRadius: 5,
-            }}
-          />
-        </div>
-        <div style={{ fontSize: 14, color: "#4a5568", fontWeight: 500 }}>
-          {progress}%
-        </div>
-      </div>
+      <ProcessingModal
+        isOpen={true}
+        progress={progress}
+        title="Đang tối ưu dung lượng PDF..."
+        fileName={file.name}
+        stepText={
+          progress >= 85
+            ? "Đang hoàn tất đóng gói file PDF nén..."
+            : progress >= 50
+            ? "Đang nén hình ảnh và tinh gọn cấu trúc..."
+            : "Đang phân tích dữ liệu PDF..."
+        }
+      />
     );
   }
 

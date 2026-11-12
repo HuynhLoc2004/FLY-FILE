@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { Upload, Download, RefreshCw, Loader2, FileOutput, AlertCircle, Eye, FileWarning } from 'lucide-react';
+import { Upload, Download, RefreshCw, FileOutput, AlertCircle, Eye, FileWarning } from 'lucide-react';
 import { API_URL } from '../config/api';
+import ProcessingModal from './ProcessingModal';
+import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
 
 const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
@@ -12,6 +14,18 @@ const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
   const [resultFilename, setResultFilename] = useState('');
   const inputRef = useRef(null);
   const hasStarted = useRef(false);
+
+  const {
+    progress,
+    stepText,
+    startProgress,
+    finishProgress,
+    resetProgress,
+  } = useProcessingProgress({
+    20: 'Đang đọc tài liệu Word & bóc tách văn bản...',
+    40: 'Đang định dạng font Unicode & tái tạo bảng biểu...',
+    70: 'Đang dựng các trang PDF và kiểm tra lề trang...',
+  });
 
   const isWord = file && /\.(docx?|doc)$/i.test(file.name);
 
@@ -36,6 +50,7 @@ const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
     if (!file || !isWord) return;
     setStatus('loading');
     setError('');
+    startProgress('Đang tải lên tài liệu Word...');
     try {
       const form = new FormData();
       form.append('file', file);
@@ -46,8 +61,11 @@ const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
       setResultBlob(blob);
       setResultUrl(url);
       setResultFilename(file.name.replace(/\.(docx?|doc)$/i, '') + '.pdf');
-      setStatus('done');
+      finishProgress(() => {
+        setStatus('done');
+      });
     } catch (e) {
+      resetProgress();
       setError(e.message);
       setStatus('error');
     }
@@ -91,11 +109,13 @@ const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return (
-    <div style={{ maxWidth: 500, margin: '80px auto', padding: 36, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center' }}>
-      <Loader2 size={44} style={{ color: '#0062ff', margin: '0 auto 20px', display: 'block', animation: 'spin 1.5s linear infinite' }} />
-      <h3 style={{ fontSize: 18, fontWeight: 600, color: '#2d3748', marginBottom: 6 }}>Đang chuyển đổi Word sang PDF...</h3>
-      <p style={{ fontSize: 13, color: '#718096', wordBreak: 'break-all' }}>{file.name}</p>
-    </div>
+    <ProcessingModal
+      isOpen={true}
+      progress={progress}
+      title="Đang chuyển đổi Word sang PDF..."
+      fileName={file.name}
+      stepText={stepText}
+    />
   );
 
   // ── Error ────────────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import {
   AlertCircle, UploadCloud, CheckCircle2, Eye,
 } from 'lucide-react';
 import { API_URL } from '../config/api';
+import ProcessingModal from './ProcessingModal';
 
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -182,18 +183,13 @@ const PdfToWordWorkspace = () => {
 
   // ── loading ──────────────────────────────────────────────────────────────────
   if (status === 'loading') return (
-    <div style={{ maxWidth: 500, margin: '80px auto', padding: 36, background: '#fff', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.08)', textAlign: 'center' }}>
-      <Loader2 size={44} style={{ color: '#0062ff', margin: '0 auto 20px', display: 'block', animation: 'spin 1.5s linear infinite' }} />
-      <h3 style={{ fontSize: 18, fontWeight: 600, color: '#2d3748', marginBottom: 6 }}>Đang chuyển đổi PDF sang Word...</h3>
-      <p style={{ fontSize: 13, color: '#718096', wordBreak: 'break-all', marginBottom: 28 }}>{file?.name}</p>
-      <div style={{ width: '100%', height: 10, background: '#edf2f7', borderRadius: 5, overflow: 'hidden', marginBottom: 10 }}>
-        <div style={{ width: `${progress}%`, height: '100%', background: 'linear-gradient(90deg,#0062ff,#00c6ff)', transition: 'width 0.25s ease-out', borderRadius: 5 }} />
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#4a5568', fontWeight: 500 }}>
-        <span>{loadingStep}</span>
-        <span>{progress}%</span>
-      </div>
-    </div>
+    <ProcessingModal
+      isOpen={true}
+      progress={progress}
+      title="Đang chuyển đổi PDF sang Word..."
+      fileName={file?.name}
+      stepText={loadingStep}
+    />
   );
 
   // ── error ────────────────────────────────────────────────────────────────────

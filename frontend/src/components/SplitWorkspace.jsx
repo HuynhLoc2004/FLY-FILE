@@ -6,6 +6,8 @@ import {
 import { API_URL } from '../config/api';
 import { Document } from 'react-pdf';
 import PdfRenderer, { PdfPageThumbnail } from './PdfRenderer';
+import ProcessingModal from './ProcessingModal';
+import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
 const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [file, setFile] = useState(initialFiles?.[0] || null);
@@ -18,6 +20,19 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
   const [extracting, setExtracting] = useState(null);
   const [error, setError] = useState('');
   const inputRef = useRef(null);
+
+  const {
+    progress,
+    isProcessing,
+    stepText,
+    startProgress,
+    finishProgress,
+    resetProgress,
+  } = useProcessingProgress({
+    25: 'Đang trích xuất các trang cần giữ lại...',
+    50: 'Đang áp dụng góc xoay và căn chỉnh trang...',
+    75: 'Đang đóng gói và tái cấu trúc file PDF mới...',
+  });
 
   const resetSelection = () => {
     setRemovedPages(new Set());
@@ -147,6 +162,7 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
     }
     setStatus('loading');
     setError('');
+    startProgress('Đang tải trang và chuẩn bị chỉnh sửa PDF...');
     try {
       const rotations = Object.fromEntries(Object.entries(pageRotations).filter(
         ([page, rotation]) => rotation && !removedPages.has(Number(page)),
@@ -175,8 +191,11 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
       anchor.download = file.name.replace(/\.pdf$/i, '') + '_da_chinh_sua.pdf';
       anchor.click();
       URL.revokeObjectURL(url);
-      setStatus('done');
+      finishProgress(() => {
+        setStatus('done');
+      });
     } catch (downloadError) {
+      resetProgress();
       setError(downloadError.message);
       setStatus('error');
     }
@@ -353,6 +372,14 @@ const SplitWorkspace = ({ initialFiles, onCancel }) => {
           {error && <p className="split-status-error">{error}</p>}
         </main>
       </div>
+
+      <ProcessingModal
+        isOpen={isProcessing}
+        progress={progress}
+        title="Đang xuất file PDF chỉnh sửa..."
+        fileName={file?.name}
+        stepText={stepText}
+      />
     </div>
   );
 };
