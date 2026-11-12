@@ -104,3 +104,4 @@ const BrandLogo = ({ size = 32, showText = true, className = '' }) => {
 };
 
 export default BrandLogo;
+

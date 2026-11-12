@@ -131,9 +131,9 @@ def _wait_for_provider_slot() -> None:
     """Throttle document calls so large PDFs do not burst through RPM quota."""
     global _last_provider_request_at
     try:
-        interval = float(os.environ.get("GEMINI_MIN_REQUEST_INTERVAL_SECONDS", "2.5"))
+        interval = float(os.environ.get("GEMINI_MIN_REQUEST_INTERVAL_SECONDS", "0.8"))
     except ValueError:
-        interval = 2.5
+        interval = 0.8
     interval = max(0.0, min(interval, 30.0))
     with _provider_rate_lock:
         remaining = interval - (time.monotonic() - _last_provider_request_at)
@@ -356,9 +356,9 @@ def translate_html_pages(html_pages: list[str], api_key: str | None = None,
     )
     if max_workers is None:
         try:
-            max_workers = int(os.environ.get("GEMINI_TRANSLATION_WORKERS", "1"))
+            max_workers = int(os.environ.get("GEMINI_TRANSLATION_WORKERS", "3"))
         except ValueError:
-            max_workers = 1
+            max_workers = 3
     worker_count = min(max(1, max_workers), 4, max(1, len(batches)))
 
     # Sequential calls are the safe default for API keys with low RPM quota.

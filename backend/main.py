@@ -144,6 +144,7 @@ async def api_compress(
 @app.post("/api/translate-pdf/html")
 async def api_translate_pdf_html(
     file: UploadFile = File(...),
+    pages: str | None = Form(None),
 ):
     """
     HTML-based translation pipeline:
@@ -175,14 +176,32 @@ async def api_translate_pdf_html(
         # "Translation failed" placeholder for every page.
         get_gemini_api_key()
         content = await file.read()
-        pages = pdf_to_html_pages(content)
+        all_doc_pages = pdf_to_html_pages(content)
+        total_doc_pages = len(all_doc_pages)
+
+        # Filter pages if requested by user/frontend chunking
+        pages_list = all_doc_pages
+        if isinstance(pages, str) and pages.strip():
+            selected_nums = set()
+            for part in pages.replace(" ", "").split(","):
+                if "-" in part:
+                    s_str, e_str = part.split("-", 1)
+                    s_num = int(s_str) if s_str.isdigit() else 1
+                    e_num = int(e_str) if e_str.isdigit() else total_doc_pages
+                    for num in range(max(1, s_num), min(total_doc_pages, e_num) + 1):
+                        selected_nums.add(num)
+                elif part.isdigit():
+                    p_num = int(part)
+                    if 1 <= p_num <= total_doc_pages:
+                        selected_nums.add(p_num)
+            if selected_nums:
+                pages_list = [p for p in all_doc_pages if p["page_num"] in selected_nums]
 
         from bs4 import BeautifulSoup
 
         # Translate all usable structured pages in bounded multi-page batches.
-        # A 91-page document no longer creates 91 simultaneous provider calls.
         structured_pages = []
-        for p in pages:
+        for p in pages_list:
             source_text = BeautifulSoup(p.get("html", ""), "html.parser").get_text(" ", strip=True)
             if source_text:
                 structured_pages.append(p)
@@ -221,7 +240,7 @@ async def api_translate_pdf_html(
 
         translated_pages = []
         failed_pages = []
-        for p in pages:
+        for p in pages_list:
             translated_html = translated_by_page.get(p["page_num"])
             if translated_html is None:
                 # Only pages whose OCR/text extraction genuinely failed use
@@ -279,6 +298,7 @@ async def api_translate_pdf_html(
         return {
             "original_filename": file.filename or "document.pdf",
             "total_pages": len(translated_pages),
+            "total_doc_pages": total_doc_pages,
             "mode": "html",
             "pages": translated_pages,
             "failed_pages": failed_pages,

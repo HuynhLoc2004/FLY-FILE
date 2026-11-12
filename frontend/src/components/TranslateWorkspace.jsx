@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import {
   Upload, Download, Loader2,
@@ -152,7 +152,7 @@ const TranslatedPage = ({ pageData, pageNum, onBlockEdit }) => (
 const TranslateWorkspace = () => {
   const [file, setFile] = useState(null);
   const [objectUrl, setObjectUrl] = useState(null);
-  const [status, setStatus] = useState('idle'); // idle | loading | done | error
+  const [status, setStatus] = useState('idle'); // idle | configuring | loading | done | error
   const [errorMsg, setErrorMsg] = useState('');
   const [result, setResult] = useState(null);
   const [pdfNumPages, setPdfNumPages] = useState(null);
@@ -161,6 +161,8 @@ const TranslateWorkspace = () => {
   const [loadingStep, setLoadingStep] = useState('');
   const [previewBold, setPreviewBold] = useState(false);
   const [previewLineHeight, setPreviewLineHeight] = useState(null);
+  const [selectedRangeMode, setSelectedRangeMode] = useState('all'); // 'all' | 'custom'
+  const [customRangeText, setCustomRangeText] = useState('');
 
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(480);
@@ -198,65 +200,130 @@ const TranslateWorkspace = () => {
     return () => observer.disconnect();
   }, [file, status]);
 
-  const fetchTranslation = async (f) => {
+  const parseSelectedPages = (mode, customStr, total) => {
+    if (mode === 'all') {
+      return Array.from({ length: total }, (_, i) => i + 1);
+    }
+    const pages = new Set();
+    const parts = (customStr || '').replace(/\s+/g, '').split(',');
+    for (const part of parts) {
+      if (!part) continue;
+      if (part.includes('-')) {
+        const [s, e] = part.split('-');
+        const start = parseInt(s, 10) || 1;
+        const end = parseInt(e, 10) || total;
+        for (let i = Math.max(1, start); i <= Math.min(total, end); i++) {
+          pages.add(i);
+        }
+      } else {
+        const p = parseInt(part, 10);
+        if (p >= 1 && p <= total) pages.add(p);
+      }
+    }
+    return pages.size > 0 ? Array.from(pages).sort((a, b) => a - b) : Array.from({ length: total }, (_, i) => i + 1);
+  };
+
+  const startTranslation = async (targetFile, mode = selectedRangeMode, total = pdfNumPages) => {
+    const fileToUse = targetFile || file;
+    if (!fileToUse) return;
+
     setStatus('loading');
     setErrorMsg('');
-    setProgress(0);
-    setLoadingStep('Đang khởi tạo dịch...');
+    setProgress(5);
+    setLoadingStep('Đang chuẩn bị dịch tài liệu...');
 
-    let currentProgress = 0;
-    const interval = setInterval(() => {
-      const remaining = 99 - currentProgress;
-      const increment = Math.max(0.1, remaining * 0.04);
-      currentProgress = Math.min(99, currentProgress + increment);
+    const totalPages = total || pdfNumPages || 1;
+    const targetPages = parseSelectedPages(mode, customRangeText, totalPages);
 
-      const displayProgress = Math.floor(currentProgress);
-      setProgress(displayProgress);
+    // Chunk size: 2 pages per batch guarantees fast response (< 8s) and zero timeouts
+    const CHUNK_SIZE = 2;
+    const chunks = [];
+    for (let i = 0; i < targetPages.length; i += CHUNK_SIZE) {
+      chunks.push(targetPages.slice(i, i + CHUNK_SIZE));
+    }
 
-      if (displayProgress < 25) {
-        setLoadingStep('Đang đọc cấu trúc file PDF...');
-      } else if (displayProgress < 50) {
-        setLoadingStep('Đang phân tích bảng biểu và căn lề tự động...');
-      } else if (displayProgress < 75) {
-        setLoadingStep('Đang đối chiếu biểu mẫu dịch chuyên dụng...');
-      } else if (displayProgress < 90) {
-        setLoadingStep('Đang áp dụng từ điển thuật ngữ Lãnh sự...');
-      } else {
-        setLoadingStep('Đang hoàn thiện bố cục và đóng gói file Word...');
-      }
-    }, 250);
+    const allPages = [];
+    const failedPages = [];
 
     try {
-      const formData = new FormData();
-      formData.append('file', f);
+      for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+        const chunk = chunks[chunkIdx];
+        const chunkLabel = chunk.length === 1 ? `trang ${chunk[0]}` : `trang ${chunk[0]}-${chunk[chunk.length - 1]}`;
+        const currentPct = Math.min(95, Math.round((chunkIdx / chunks.length) * 90) + 5);
 
-      const res = await fetch(`${API_URL}/api/translate-pdf/html`, { method: 'POST', body: formData });
-      clearInterval(interval);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: 'Lỗi không xác định' }));
-        throw new Error(err.detail);
+        setProgress(currentPct);
+        setLoadingStep(`Đang dịch ${chunkLabel} (${chunkIdx + 1}/${chunks.length} đợt)...`);
+
+        const formData = new FormData();
+        formData.append('file', fileToUse);
+        formData.append('pages', chunk.join(','));
+
+        const res = await fetch(`${API_URL}/api/translate-pdf/html`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: `Lỗi khi dịch ${chunkLabel}` }));
+          throw new Error(err.detail || `Lỗi khi dịch ${chunkLabel}`);
+        }
+
+        const data = await res.json();
+        if (data.pages && Array.isArray(data.pages)) {
+          allPages.push(...data.pages);
+        }
+        if (data.failed_pages && Array.isArray(data.failed_pages)) {
+          failedPages.push(...data.failed_pages);
+        }
       }
-      const data = await res.json();
+
       setProgress(100);
-      setLoadingStep('Hoàn thành!');
+      setLoadingStep('Hoàn thành bản dịch!');
+
+      allPages.sort((a, b) => a.page_num - b.page_num);
 
       setTimeout(() => {
-        setResult({ ...data, mode: 'html' });
+        setResult({
+          original_filename: fileToUse.name,
+          total_pages: allPages.length,
+          total_doc_pages: totalPages,
+          mode: 'html',
+          pages: allPages,
+          failed_pages: failedPages,
+        });
         setStatus('done');
-      }, 400);
+      }, 350);
     } catch (err) {
-      clearInterval(interval);
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'Quá trình dịch bị lỗi');
       setStatus('error');
     }
   };
 
-  const handleFile = useCallback(async (f) => {
+  const handleFile = async (f) => {
     setFile(f);
     setObjectUrl(URL.createObjectURL(f));
     setResult(null);
-    await fetchTranslation(f);
-  }, []);
+    setErrorMsg('');
+
+    try {
+      const arrayBuffer = await f.arrayBuffer();
+      const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      const numPages = pdf.numPages || 1;
+      setPdfNumPages(numPages);
+      setCustomRangeText(`1-${Math.min(numPages, 5)}`);
+
+      if (numPages <= 2) {
+        await startTranslation(f, 'all', numPages);
+      } else {
+        setStatus('configuring');
+      }
+    } catch (e) {
+      console.warn('Could not inspect PDF page count', e);
+      setPdfNumPages(1);
+      await startTranslation(f, 'all', 1);
+    }
+  };
 
   const handleReset = () => {
     setFile(null);
@@ -266,6 +333,8 @@ const TranslateWorkspace = () => {
     setErrorMsg('');
     setPreviewBold(false);
     setPreviewLineHeight(null);
+    setSelectedRangeMode('all');
+    setCustomRangeText('');
   };
 
   const downloadTranslation = () => {
@@ -422,6 +491,176 @@ const TranslateWorkspace = () => {
   };
 
   if (status === 'idle') return <Dropzone onFiles={handleFile} />;
+
+  if (status === 'configuring') {
+    return (
+      <div className="translate-status-screen" style={{ minHeight: 'calc(100vh - 120px)', padding: '24px 16px' }}>
+        <div className="translate-config-card" style={{
+          maxWidth: '560px',
+          width: '100%',
+          background: 'rgba(15, 23, 42, 0.75)',
+          border: '1px solid rgba(148, 163, 184, 0.2)',
+          borderRadius: '20px',
+          padding: '28px 24px',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.3)',
+          color: '#f8fafc',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
+            <div style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '14px',
+              background: 'linear-gradient(135deg, #38bdf8, #0ea5e9)',
+              display: 'grid',
+              placeItems: 'center',
+              color: '#020617',
+              flexShrink: 0,
+            }}>
+              <FileText size={24} />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <h3 style={{ fontSize: '18px', margin: '0 0 4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#f8fafc' }}>
+                {file?.name}
+              </h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#94a3b8' }}>
+                <span>{(file?.size ? (file.size / 1024 / 1024).toFixed(2) + ' MB' : '')}</span>
+                <span>•</span>
+                <span style={{
+                  background: 'rgba(56, 189, 248, 0.15)',
+                  color: '#38bdf8',
+                  padding: '2px 8px',
+                  borderRadius: '999px',
+                  fontWeight: 600,
+                  fontSize: '12px',
+                }}>
+                  {pdfNumPages} trang
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '22px' }}>
+            <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px', color: '#e2e8f0' }}>
+              Tùy chọn dịch cho tài liệu:
+            </div>
+
+            {/* Option 1: All pages */}
+            <label style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+              padding: '14px',
+              borderRadius: '12px',
+              border: `1px solid ${selectedRangeMode === 'all' ? '#38bdf8' : 'rgba(148, 163, 184, 0.2)'}`,
+              background: selectedRangeMode === 'all' ? 'rgba(56, 189, 248, 0.08)' : 'rgba(2, 6, 23, 0.4)',
+              cursor: 'pointer',
+              marginBottom: '10px',
+              transition: 'all 0.2s ease',
+            }}>
+              <input
+                type="radio"
+                name="rangeMode"
+                checked={selectedRangeMode === 'all'}
+                onChange={() => setSelectedRangeMode('all')}
+                style={{ marginTop: '3px', accentColor: '#38bdf8' }}
+              />
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '14px', color: '#f8fafc' }}>
+                  Dịch toàn bộ tài liệu ({pdfNumPages} trang)
+                </div>
+                <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '3px' }}>
+                  Tự động chia đợt thông minh (2 trang/đợt) chống nghẽn và đảm bảo không bao giờ bị timeout.
+                </div>
+              </div>
+            </label>
+
+            {/* Option 2: Custom range */}
+            <label style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+              padding: '14px',
+              borderRadius: '12px',
+              border: `1px solid ${selectedRangeMode === 'custom' ? '#38bdf8' : 'rgba(148, 163, 184, 0.2)'}`,
+              background: selectedRangeMode === 'custom' ? 'rgba(56, 189, 248, 0.08)' : 'rgba(2, 6, 23, 0.4)',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease',
+            }}>
+              <input
+                type="radio"
+                name="rangeMode"
+                checked={selectedRangeMode === 'custom'}
+                onChange={() => setSelectedRangeMode('custom')}
+                style={{ marginTop: '3px', accentColor: '#38bdf8' }}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, fontSize: '14px', color: '#f8fafc' }}>
+                  Dịch theo khoảng trang tùy chọn
+                </div>
+                <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '3px', marginBottom: '8px' }}>
+                  Ví dụ: 1-3 (dịch 3 trang đầu) hoặc 1,3,5
+                </div>
+                {selectedRangeMode === 'custom' && (
+                  <input
+                    type="text"
+                    value={customRangeText}
+                    onChange={(e) => setCustomRangeText(e.target.value)}
+                    placeholder={`1-${Math.min(pdfNumPages || 5, 5)}`}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid rgba(56, 189, 248, 0.4)',
+                      background: '#090e1a',
+                      color: '#f8fafc',
+                      fontSize: '13px',
+                      outline: 'none',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                )}
+              </div>
+            </label>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{
+                flex: 1,
+                padding: '12px',
+                borderRadius: '12px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
+              onClick={() => startTranslation(file, selectedRangeMode, pdfNumPages)}
+            >
+              <Languages size={18} /> Bắt đầu dịch ngay
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{
+                padding: '12px 18px',
+                borderRadius: '12px',
+                background: 'rgba(148, 163, 184, 0.15)',
+                color: '#e2e8f0',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+              onClick={handleReset}
+            >
+              Đổi file
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (status === 'loading') {
     const cuteTips = [
