@@ -27,7 +27,7 @@ The frontend proxies API calls to `http://localhost:8000` — both must run simu
 ## Environment Variables
 
 The backend reads these at startup:
-- `GEMINI_API_KEY` — Gemini API key (has a hardcoded fallback key in `engine.py` and `html_translator.py`)
+- `GEMINI_API_KEY` — Gemini API key (configured in `backend/.env`)
 - `DEEPL_API_KEY` — optional; enables DeepL as translation backend instead of Google Translate
 
 ## Architecture
