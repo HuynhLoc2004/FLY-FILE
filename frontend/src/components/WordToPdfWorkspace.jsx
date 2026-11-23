@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Upload, Download, RefreshCw, FileOutput, AlertCircle, Eye, FileWarning } from 'lucide-react';
-import { API_URL } from '../config/api';
+import { API_URL, apiFetch, formatErrorMessage } from '../config/api';
 import ProcessingModal from './ProcessingModal';
 import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
@@ -54,7 +54,7 @@ const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch(`${API_URL}/api/word-to-pdf`, { method: 'POST', body: form });
+      const res = await apiFetch(`${API_URL}/api/word-to-pdf`, { method: 'POST', body: form });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Lỗi chuyển đổi');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -66,7 +66,7 @@ const WordToPdfWorkspace = ({ initialFiles, onCancel }) => {
       });
     } catch (e) {
       resetProgress();
-      setError(e.message);
+      setError(formatErrorMessage(e));
       setStatus('error');
     }
   };

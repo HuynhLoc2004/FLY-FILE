@@ -6,7 +6,7 @@ import {
   Settings,
   Zap,
 } from "lucide-react";
-import { API_URL } from "../config/api";
+import { API_URL, apiFetch, formatErrorMessage } from "../config/api";
 import ProcessingModal from "./ProcessingModal";
 
 const CompressWorkspace = ({ initialFiles, onCancel }) => {
@@ -112,7 +112,7 @@ const CompressWorkspace = ({ initialFiles, onCancel }) => {
       formData.append("file", file);
       formData.append("level", level);
 
-      const res = await fetch(`${API_URL}/api/compress`, {
+      const res = await apiFetch(`${API_URL}/api/compress`, {
         method: "POST",
         body: formData,
       });
@@ -141,7 +141,7 @@ const CompressWorkspace = ({ initialFiles, onCancel }) => {
       }, 400);
     } catch (err) {
       clearInterval(interval);
-      setErrorMsg(err.message);
+      setErrorMsg(formatErrorMessage(err));
       setStatus("error");
     }
   };

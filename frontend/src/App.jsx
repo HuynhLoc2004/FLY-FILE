@@ -1,14 +1,20 @@
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import CursorFollower from './components/CursorFollower';
+import { API_URL } from './config/api';
 
 const ToolPage = lazy(() => import('./pages/ToolPage'));
 
 const AppContent = () => {
   const location = useLocation();
   const showCursorFollower = location.pathname === '/';
+
+  // Warm up Render backend on initial app load to minimize cold-start latency
+  useEffect(() => {
+    fetch(`${API_URL}/health`).catch(() => {});
+  }, []);
   
   return (
     <>

@@ -4,7 +4,7 @@ import {
   FileText, Download, RefreshCw, Loader2,
   AlertCircle, UploadCloud, CheckCircle2, Eye,
 } from 'lucide-react';
-import { API_URL } from '../config/api';
+import { API_URL, apiFetch, formatErrorMessage } from '../config/api';
 import ProcessingModal from './ProcessingModal';
 
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -95,7 +95,7 @@ const PdfToWordWorkspace = () => {
     try {
       const fd = new FormData();
       fd.append('file', f);
-      const res = await fetch(`${API_URL}/api/pdf-to-word`, { method: 'POST', body: fd });
+      const res = await apiFetch(`${API_URL}/api/pdf-to-word`, { method: 'POST', body: fd });
       clearInterval(timer);
       if (!res.ok) {
         const responseText = await res.text();
@@ -114,7 +114,7 @@ const PdfToWordWorkspace = () => {
       setTimeout(() => setStatus('done'), 350);
     } catch (err) {
       clearInterval(timer);
-      setErrorMsg(err.message);
+      setErrorMsg(formatErrorMessage(err));
       setStatus('error');
     }
   };

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import PdfRenderer from './PdfRenderer';
 import MergeResult from './MergeResult';
-import { API_URL } from '../config/api';
+import { API_URL, apiFetch, formatErrorMessage } from '../config/api';
 import ProcessingModal from './ProcessingModal';
 import { useProcessingProgress } from '../hooks/useProcessingProgress';
 
@@ -249,7 +249,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
         files.forEach(f => formData.append('files', f.file, f.name + '.' + f.extension));
         formData.append('rotations', JSON.stringify(files.map(f => f.rotation || 0)));
         formData.append('output_name', files[0]?.name || 'merged');
-        const res = await fetch(`${API_URL}/api/merge`, { method: 'POST', body: formData });
+        const res = await apiFetch(`${API_URL}/api/merge`, { method: 'POST', body: formData });
         if (!res.ok) {
           const err = await res.json().catch(() => ({ detail: 'Lỗi không xác định' }));
           throw new Error(err.detail);
@@ -274,7 +274,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
         formData.append('manifest', JSON.stringify(manifest));
         formData.append('output_name', uniqueFiles[0]?.name || 'merged');
 
-        const res = await fetch(`${API_URL}/api/merge-pages`, { method: 'POST', body: formData });
+        const res = await apiFetch(`${API_URL}/api/merge-pages`, { method: 'POST', body: formData });
         if (!res.ok) {
           const err = await res.json().catch(() => ({ detail: 'Lỗi không xác định' }));
           throw new Error(err.detail);
@@ -291,7 +291,7 @@ const MergeWorkspace = ({ initialFiles, onCancel }) => {
     } catch (err) {
       resetProgress();
       setIsMerging(false);
-      setMergeError(`Gộp thất bại: ${err.message}`);
+      setMergeError(`Gộp thất bại: ${formatErrorMessage(err)}`);
     }
   };
 
