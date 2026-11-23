@@ -98,17 +98,26 @@ def _html_document(body_html: str) -> str:
 def convert_word_bytes_to_pdf_bytes(word_bytes: bytes) -> bytes:
     if not word_bytes:
         raise ValueError("File Word trống.")
+    result = mammoth.convert_to_html(io.BytesIO(word_bytes))
+    document_html = _html_document(result.value)
+
+    # Try WeasyPrint first when available (Linux / Render)
+    try:
+        from weasyprint import HTML as WeasyHTML
+        return WeasyHTML(string=document_html).write_pdf()
+    except Exception:
+        pass
+
     if not _register_unicode_font():
         raise RuntimeError(
             "Máy chủ chưa có font Unicode. Hãy cài DejaVu Sans hoặc cấu hình PDF_FONT_PATH."
         )
-    result = mammoth.convert_to_html(io.BytesIO(word_bytes))
-    document_html = _html_document(result.value)
     output = io.BytesIO()
+    # Note: Do not pass encoding="utf-8" here to avoid html5lib TypeError:
+    # "Cannot set an encoding with a unicode input, set ['transport_encoding']"
     status = pisa.CreatePDF(
-        io.BytesIO(document_html.encode("utf-8")),
+        src=io.BytesIO(document_html.encode("utf-8")),
         dest=output,
-        encoding="utf-8",
     )
     if status.err:
         raise RuntimeError(f"Không thể tạo PDF (mã lỗi {status.err}).")

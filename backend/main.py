@@ -357,7 +357,6 @@ def _html_to_pdf_bytes(html: str) -> bytes:
         status = pisa.CreatePDF(
             src=io.BytesIO(portable_html.encode("utf-8")),
             dest=output,
-            encoding="utf-8",
         )
         if status.err:
             raise RuntimeError(f"xhtml2pdf reported {status.err} rendering error(s)")

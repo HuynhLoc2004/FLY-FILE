@@ -14,7 +14,7 @@ _provider_rate_lock = threading.Lock()
 _last_provider_request_at = 0.0
 
 DEFAULT_GEMINI_MODELS = (
-    "gemini-2.5-flash",
+    "gemini-2.0-flash",
 )
 
 
@@ -41,9 +41,14 @@ def get_gemini_models() -> tuple[str, ...]:
     configured = os.environ.get("GEMINI_MODELS", "")
     models = tuple(model.strip() for model in configured.split(",") if model.strip())
     models = models or DEFAULT_GEMINI_MODELS
+    # Sanitize invalid or discontinued model names (e.g. gemini-2.5-flash returns 404)
+    sanitized = tuple(
+        "gemini-2.0-flash" if m in ("gemini-2.5-flash", "gemini-2.5-pro") else m
+        for m in models
+    )
     # Flash is substantially faster and more reliable for deterministic
     # translation. Keep it first even if an older deployment configured Pro.
-    return tuple(sorted(models, key=lambda model: model != "gemini-2.5-flash"))
+    return tuple(sorted(sanitized, key=lambda model: model != "gemini-2.0-flash"))
 
 VISION_PROMPT = """\
 You are a Vietnamese-to-English legal document translator for consular purposes.
@@ -75,6 +80,7 @@ Translation rules:
 - Preserve the complete meaning, tone, tense, negation, numbers, identifiers, and legal relationships
 - Translate by meaning and context, not word-for-word; do not add or omit facts
 - Personal names → UPPERCASE Latin no diacritics (NGUYEN VAN AN)
+- If the original text is already in English, preserve it in English while formatting as clean structured HTML
 - "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM" → "SOCIALIST REPUBLIC OF VIETNAM"
 - "Độc lập - Tự do - Hạnh phúc" → "Independence - Freedom - Happiness"
 - Dates: write as "August 12th, 2010" or "March 7th, 1968" (month name + ordinal day + year)
@@ -254,6 +260,7 @@ def _translate_segment_batch(source_segments: list[str], key: str) -> list[str]:
 
     prompt = f"""You are a professional Vietnamese-to-English legal translator.
 Translate the JSON array below as one document, using context across all items.
+If any item is already in English, keep it in English as-is without omitting, translating, or altering it.
 Return ONLY a valid JSON array with exactly {len(source_segments)} strings in the same order.
 Do not merge, split, omit, duplicate, or reorder items. Preserve numbers and identifiers exactly.
 Each array item is exactly one source line or one table cell; its translation must remain in that item.

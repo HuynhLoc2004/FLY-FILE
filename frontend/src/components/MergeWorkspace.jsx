@@ -14,9 +14,15 @@ let nextFileId = 1;
 
 const readPdfPageCount = async (rawFile) => {
   try {
-    const { getDocument } = await import('pdfjs-dist');
+    const pdfjsDist = await import('pdfjs-dist');
+    if (!pdfjsDist.GlobalWorkerOptions.workerSrc) {
+      pdfjsDist.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs',
+        import.meta.url,
+      ).toString();
+    }
     const buf = await rawFile.arrayBuffer();
-    const loadingTask = getDocument({ data: buf });
+    const loadingTask = pdfjsDist.getDocument({ data: buf });
     const pdf = await loadingTask.promise;
     const pageCount = pdf.numPages;
     await pdf.destroy();

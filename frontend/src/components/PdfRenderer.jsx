@@ -3,8 +3,11 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
-// Use unpkg CDN worker matching react-pdf's bundled pdfjs version
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+// Use bundled worker via Vite import.meta.url to ensure offline/intranet reliability and avoid unpkg CDN blocks
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 const PdfRenderer = ({ file, pageNum = 1, scale = 1.0, onDocumentLoad, rotation = null, width, lazy = true }) => {
   const wrapperRef = useRef(null);

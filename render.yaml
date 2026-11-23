@@ -15,7 +15,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: GEMINI_MODELS
-        value: gemini-2.5-flash
+        value: gemini-2.0-flash
       - key: GEMINI_TRANSLATION_WORKERS
         value: "1"
       - key: GEMINI_MIN_REQUEST_INTERVAL_SECONDS
