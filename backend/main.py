@@ -49,9 +49,9 @@ async def build_info():
     return {
         "status": "ok",
         "service": "Fly FILE API",
-        "version": "v2.5.0",
+        "version": "v2.5.1",
         "deployment": "production",
-        "features": ["two-column-reading-order", "full-width-header", "image-preservation", "bidirectional-translation"]
+        "features": ["two-column-reading-order", "full-width-header", "image-preservation", "exact-5-page-ieee-flow"]
     }
 
 # CORS configuration

@@ -611,7 +611,7 @@ def _merge_drop_caps(blocks: list[dict]) -> list[dict]:
 
 # ── DOCX builder ──────────────────────────────────────────────────────────────
 
-def _set_section_cols(section, num_cols: int, space_twips: int = 540):
+def _set_section_cols(section, num_cols: int, space_twips: int = 240):
     cols_el = section._sectPr.find(qn("w:cols"))
     if cols_el is None:
         cols_el = OxmlElement("w:cols")
@@ -624,21 +624,21 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
     doc = Document()
 
     for section in doc.sections:
-        section.top_margin    = Inches(0.75)
-        section.bottom_margin = Inches(0.75)
-        section.left_margin   = Inches(0.75)
-        section.right_margin  = Inches(0.75)
+        section.top_margin    = Inches(0.7)
+        section.bottom_margin = Inches(0.7)
+        section.left_margin   = Inches(0.65)
+        section.right_margin  = Inches(0.65)
 
     normal = doc.styles["Normal"]
     normal.font.name = "Times New Roman"
-    normal.font.size = Pt(11)
-    normal.paragraph_format.space_after  = Pt(3.5)
+    normal.font.size = Pt(9.5)
+    normal.paragraph_format.space_after  = Pt(1.5)
     normal.paragraph_format.space_before = Pt(0)
-    normal.paragraph_format.line_spacing = 1.15
+    normal.paragraph_format.line_spacing = 1.05
 
     def _add_para(block):
         align_str  = block.get("align", "left")
-        dom_size   = block.get("font_size", 11.0) or 11.0
+        dom_size   = block.get("font_size", 9.5) or 9.5
         lines      = block.get("lines", [])
         is_heading = block.get("is_heading", False)
         blk_bold   = block.get("is_bold", False)
@@ -659,6 +659,9 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                     min(2.0, max(0.0, (x0 - 72) / 72.0))
                 )
 
+        p.paragraph_format.space_after  = Pt(1.5)
+        p.paragraph_format.line_spacing = 1.05
+
         # Gộp các dòng trong cùng block bằng SPACE, không dùng \n cứng.
         # PDF soft-wrap theo cột → Word tự reflow theo lề trang.
         all_runs = []
@@ -672,7 +675,6 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 if r_idx == 0 and l_idx > 0:
                     # Đây là run đầu của dòng mới — thêm space nối với dòng trước
                     if all_runs and not all_runs[-1]["text"].endswith(" "):
-                        # Thêm space vào run trước hoặc tạo run space mới
                         all_runs[-1]["text"] += " "
 
                 all_runs.append({
@@ -703,27 +705,17 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
     for p_idx, page in enumerate(blocks_data.get("pages", [])):
         if p_idx:
             doc.add_page_break()
-        prev_col = None
         for block in page.get("blocks", []):
             blk_col = block.get("column", "full")
             needed_cols = 2 if blk_col in (0, 1) else 1
             if needed_cols != current_cols:
                 sec = doc.add_section(WD_SECTION.CONTINUOUS)
-                sec.top_margin    = Inches(0.75)
-                sec.bottom_margin = Inches(0.75)
-                sec.left_margin   = Inches(0.75)
-                sec.right_margin  = Inches(0.75)
-                _set_section_cols(sec, needed_cols)
+                sec.top_margin    = Inches(0.7)
+                sec.bottom_margin = Inches(0.7)
+                sec.left_margin   = Inches(0.65)
+                sec.right_margin  = Inches(0.65)
+                _set_section_cols(sec, needed_cols, 240)
                 current_cols = needed_cols
-
-            if prev_col == 0 and blk_col == 1:
-                p_br = doc.add_paragraph()
-                p_br.paragraph_format.space_before = Pt(0)
-                p_br.paragraph_format.space_after = Pt(0)
-                r_br = p_br.add_run()
-                r_br.add_break(WD_BREAK.COLUMN)
-
-            prev_col = blk_col
 
             if block["type"] == "table":
                 cells = block.get("cells", [])
@@ -744,7 +736,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                         for cp in cell.paragraphs:
                             for cr in cp.runs:
                                 cr.font.name = "Times New Roman"
-                                cr.font.size = Pt(11)
+                                cr.font.size = Pt(9.5)
 
             elif block["type"] == "image":
                 img_bytes = block.get("image")
@@ -756,7 +748,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                                else WD_ALIGN_PARAGRAPH.RIGHT if align_str == "right"
                                else WD_ALIGN_PARAGRAPH.LEFT)
                 pdf_width = block["bbox"][2] - block["bbox"][0]
-                max_w = 3.35 if blk_col in (0, 1) else 6.8
+                max_w = 3.4 if blk_col in (0, 1) else 6.8
                 docx_width = Inches(min(max_w, max(0.6, pdf_width / 72.0)))
                 run = p.add_run()
                 try:
