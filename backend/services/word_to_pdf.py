@@ -110,6 +110,58 @@ def _convert_via_libreoffice(word_bytes: bytes) -> bytes | None:
     return None
 
 
+def _convert_via_windows_word(word_bytes: bytes) -> bytes | None:
+    """High-fidelity Word to PDF conversion via Microsoft Word COM on Windows."""
+    if os.name != "nt":
+        return None
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        doc_path = tmp_path / "document.docx"
+        pdf_path = tmp_path / "document.pdf"
+        doc_path.write_bytes(word_bytes)
+
+        ps_script = f"""
+$ErrorActionPreference = "Stop"
+$w = New-Object -ComObject Word.Application
+$w.Visible = $false
+try {{
+    $doc = $w.Documents.Open("{doc_path.as_posix()}")
+    $doc.SaveAs([ref]"{pdf_path.as_posix()}", [ref]17)
+    $doc.Close([ref]$false)
+}} finally {{
+    $w.Quit()
+}}
+"""
+        try:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=30,
+            )
+            if pdf_path.is_file() and pdf_path.stat().st_size > 0:
+                return pdf_path.read_bytes()
+        except Exception as exc:
+            logger.info("Windows Word COM not available: %s", exc)
+    return None
+
+
+def _apply_alignments(html_str: str) -> str:
+    """Inject align classes into paragraphs containing FLY_ALIGN markers."""
+    def replacer(match):
+        align = match.group(1)
+        p_tag = match.group(0)
+        p_clean = re.sub(r'\[\[\[FLY_ALIGN:\w+\]\]\]', '', p_tag)
+        align_css = "justify" if align in ("both", "distribute") else align
+        if '<p>' in p_clean:
+            return p_clean.replace('<p>', f'<p class="align-{align_css}">', 1)
+        return re.sub(r'<p(\s+[^>]*)>', rf'<p class="align-{align_css}"\1>', p_clean, count=1)
+
+    res = re.sub(r'<p[^>]*>(?:(?!</p>).)*?\[\[\[FLY_ALIGN:(\w+)\]\]\].*?</p>', replacer, html_str, flags=re.DOTALL)
+    return re.sub(r'\[\[\[FLY_ALIGN:\w+\]\]\]', '', res)
+
+
 def _docx_to_html_enhanced(word_bytes: bytes) -> str:
     """Preprocess docx to preserve section columns and alignments before Mammoth conversion."""
     try:
@@ -159,12 +211,17 @@ def _docx_to_html_enhanced(word_bytes: bytes) -> str:
         raw_html = mammoth.convert_to_html(io.BytesIO(word_bytes)).value
         initial_cols = 1
 
-    # Replace markers
+    # Replace alignments
+    body_html = _apply_alignments(raw_html)
+
+    # Handle isolated drop caps (e.g. <p>T</p><p>he digital transformation...</p>)
     body_html = re.sub(
-        r'<p>\[\[\[FLY_ALIGN:(\w+)\]\]\]',
-        r'<p class="align-\1">',
-        raw_html
+        r'<p[^>]*>\s*([A-Z])\s*</p>\s*<p([^>]*)>\s*([a-z])',
+        r'<p\2><b>\1</b>\3',
+        body_html
     )
+
+    # Replace section breaks
     body_html = re.sub(
         r'<p>\[\[\[FLY_SECTION_BREAK:(\d+)\]\]\]</p>',
         r'</div><div class="docx-section cols-\1">',
@@ -178,9 +235,9 @@ def _html_document(body_html: str) -> str:
     is_wide = max_columns >= 8
     is_extra_wide = max_columns >= 12
     page_size = "A3 landscape" if is_extra_wide else "A4 landscape" if is_wide else "A4 portrait"
-    page_margin = "8mm" if is_extra_wide else "10mm" if is_wide else "20mm 18mm 18mm 22mm"
-    table_font_size = "6.5pt" if is_extra_wide else "7pt" if is_wide else "10pt"
-    cell_padding = "1.5pt" if is_extra_wide else "2pt" if is_wide else "4pt 5pt"
+    page_margin = "8mm" if is_extra_wide else "10mm" if is_wide else "15mm 15mm 15mm 15mm"
+    table_font_size = "6.5pt" if is_extra_wide else "7pt" if is_wide else "9pt"
+    cell_padding = "1.5pt" if is_extra_wide else "2pt" if is_wide else "3pt 4pt"
 
     family = '"DejaVu Sans", "Liberation Sans", Arial, sans-serif'
     if _unicode_font_path():
@@ -188,20 +245,20 @@ def _html_document(body_html: str) -> str:
 
     css = (
         f'@page{{size:{page_size};margin:{page_margin};}}'
-        + f'html,body{{font-family:{family};font-size:11pt;line-height:1.35;color:#000;}}'
-        + 'body{margin:0;padding:0;}p{margin:0 0 7pt 0;}'
-        + f'h1,h2,h3,h4,h5,h6{{font-family:{family};page-break-after:avoid;margin:12pt 0 6pt;}}'
-        + f'table{{width:100%;border-collapse:collapse;margin:0 0 8pt;font-size:{table_font_size};}}'
+        + f'html,body{{font-family:{family};font-size:10pt;line-height:1.25;color:#000;}}'
+        + 'body{margin:0;padding:0;}p{margin:0 0 4pt 0;}'
+        + f'h1,h2,h3,h4,h5,h6{{font-family:{family};page-break-after:avoid;margin:8pt 0 4pt;}}'
+        + f'table{{width:100%;border-collapse:collapse;margin:0 0 6pt;font-size:{table_font_size};}}'
         + f'td,th{{border:1px solid #000;padding:{cell_padding};vertical-align:top;'
           'overflow-wrap:anywhere;word-break:break-word;hyphens:auto;}'
         + 'tr{page-break-inside:avoid;}img{max-width:100%;height:auto;}'
-        + 'ul,ol{margin:0 0 7pt 18pt;padding:0;}li{margin-bottom:2pt;}'
+        + 'ul,ol{margin:0 0 4pt 14pt;padding:0;}li{margin-bottom:1.5pt;}'
         + '.align-center{text-align:center;}'
         + '.align-right{text-align:right;}'
-        + '.align-both,.align-distribute{text-align:justify;}'
-        + '.docx-section{width:100%;margin-bottom:12pt;}'
-        + '.docx-section.cols-2{column-count:2;-webkit-column-count:2;column-gap:18pt;text-align:justify;}'
-        + '.docx-section.cols-3{column-count:3;-webkit-column-count:3;column-gap:14pt;text-align:justify;}'
+        + '.align-both,.align-distribute,.align-justify{text-align:justify;}'
+        + '.docx-section{width:100%;margin-bottom:6pt;}'
+        + '.docx-section.cols-2{column-count:2;-webkit-column-count:2;column-gap:6mm;text-align:justify;}'
+        + '.docx-section.cols-3{column-count:3;-webkit-column-count:3;column-gap:4mm;text-align:justify;}'
         + '.column-span-all,.docx-section h1,.docx-section table{column-span:all;-webkit-column-span:all;}'
     )
     return (
@@ -210,16 +267,40 @@ def _html_document(body_html: str) -> str:
     )
 
 
+def _has_multi_column_section(word_bytes: bytes) -> bool:
+    """Check if the DOCX contains multi-column sections (e.g. academic papers)."""
+    try:
+        from docx import Document
+        doc = Document(io.BytesIO(word_bytes))
+        for s in doc.sections:
+            cols = s._sectPr.xpath('.//w:cols/@w:num')
+            if cols:
+                try:
+                    if int(cols[0]) > 1:
+                        return True
+                except (ValueError, TypeError):
+                    pass
+    except Exception:
+        pass
+    return False
+
+
 def convert_word_bytes_to_pdf_bytes(word_bytes: bytes) -> bytes:
     if not word_bytes:
         raise ValueError("File Word trống.")
 
-    # 1. First: Try native headless LibreOffice conversion
+    # 1. Native headless LibreOffice conversion (Docker / Linux server)
     lo_result = _convert_via_libreoffice(word_bytes)
     if lo_result:
         return lo_result
 
-    # 2. Enhanced HTML-based conversion preserving sections, columns, and alignments
+    # 2. Native Microsoft Word COM automation (Windows hosts for multi-column documents)
+    if _has_multi_column_section(word_bytes):
+        win_result = _convert_via_windows_word(word_bytes)
+        if win_result:
+            return win_result
+
+    # 3. Enhanced HTML-based conversion preserving sections, wide tables, and alignments
     body_html = _docx_to_html_enhanced(word_bytes)
     document_html = _html_document(body_html)
 
