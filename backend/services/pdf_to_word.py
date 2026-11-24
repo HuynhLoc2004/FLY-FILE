@@ -14,7 +14,7 @@ import unicodedata
 import fitz  # PyMuPDF
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.enum.section import WD_SECTION
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -423,7 +423,7 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
             paragraphs = _merge_paragraph_blocks(paragraphs, page_width)
 
         else:
-            raw = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
+            raw = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_PRESERVE_IMAGES)
 
             # Tính heading threshold
             all_sizes = []
@@ -509,9 +509,26 @@ def _sort_blocks_reading_order(blocks: list[dict], page_width: float, page_heigh
         return []
 
     col_mid = page_width / 2.0
-    col_blocks = [b for b in blocks if (b["bbox"][2] - b["bbox"][0]) < 0.62 * page_width]
-    has_left = any(b["bbox"][2] <= col_mid + 25 for b in col_blocks)
-    has_right = any(b["bbox"][0] >= col_mid - 25 for b in col_blocks)
+
+    # Classify each block into column 0, column 1, or full width
+    for b in blocks:
+        bbox = b["bbox"]
+        w = bbox[2] - bbox[0]
+        cx = (bbox[0] + bbox[2]) / 2.0
+        spans_center = (bbox[0] < col_mid - 25 and bbox[2] > col_mid + 25)
+        sym = abs(bbox[0] - (page_width - bbox[2]))
+        is_centered = (sym < page_width * 0.08) and (w > page_width * 0.35)
+
+        # In multi-column layouts (IEEE, ACM, Springer), each column width <= 48% of page width
+        is_col = (w <= 0.48 * page_width) and not spans_center and not is_centered
+        if is_col:
+            b["column"] = 0 if (cx < col_mid) else 1
+        else:
+            b["column"] = "full"
+
+    col_blocks = [b for b in blocks if b.get("column") in (0, 1)]
+    has_left = any(b["column"] == 0 for b in col_blocks)
+    has_right = any(b["column"] == 1 for b in col_blocks)
 
     if not (has_left and has_right and len(col_blocks) >= 2):
         for b in blocks:
@@ -525,22 +542,17 @@ def _sort_blocks_reading_order(blocks: list[dict], page_width: float, page_heigh
 
     for b in blocks:
         bbox = b["bbox"]
-        w = bbox[2] - bbox[0]
-        cx = (bbox[0] + bbox[2]) / 2.0
-        if bbox[3] <= first_col_y + 8 or (w >= 0.62 * page_width and bbox[1] < first_col_y + 15):
-            b["column"] = "full"
-            header.append(b)
-        elif bbox[1] >= last_col_y - 8 and w >= 0.62 * page_width:
-            b["column"] = "full"
-            footer.append(b)
-        elif w >= 0.62 * page_width:
-            b["column"] = "full"
-            spanning_mid.append(b)
-        elif cx < col_mid:
-            b["column"] = 0
+        col = b.get("column", "full")
+        if col == "full":
+            if bbox[3] <= first_col_y + 12:
+                header.append(b)
+            elif bbox[1] >= last_col_y - 12:
+                footer.append(b)
+            else:
+                spanning_mid.append(b)
+        elif col == 0:
             left_col.append(b)
         else:
-            b["column"] = 1
             right_col.append(b)
 
     header.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
@@ -691,6 +703,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
     for p_idx, page in enumerate(blocks_data.get("pages", [])):
         if p_idx:
             doc.add_page_break()
+        prev_col = None
         for block in page.get("blocks", []):
             blk_col = block.get("column", "full")
             needed_cols = 2 if blk_col in (0, 1) else 1
@@ -702,6 +715,15 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 sec.right_margin  = Inches(0.75)
                 _set_section_cols(sec, needed_cols)
                 current_cols = needed_cols
+
+            if prev_col == 0 and blk_col == 1:
+                p_br = doc.add_paragraph()
+                p_br.paragraph_format.space_before = Pt(0)
+                p_br.paragraph_format.space_after = Pt(0)
+                r_br = p_br.add_run()
+                r_br.add_break(WD_BREAK.COLUMN)
+
+            prev_col = blk_col
 
             if block["type"] == "table":
                 cells = block.get("cells", [])
@@ -734,7 +756,8 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                                else WD_ALIGN_PARAGRAPH.RIGHT if align_str == "right"
                                else WD_ALIGN_PARAGRAPH.LEFT)
                 pdf_width = block["bbox"][2] - block["bbox"][0]
-                docx_width = Inches(min(5.8, max(0.6, pdf_width / 72.0)))
+                max_w = 3.35 if blk_col in (0, 1) else 6.8
+                docx_width = Inches(min(max_w, max(0.6, pdf_width / 72.0)))
                 run = p.add_run()
                 try:
                     run.add_picture(io.BytesIO(img_bytes), width=docx_width)

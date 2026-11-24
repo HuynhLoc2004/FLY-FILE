@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import fitz
 from docx import Document
+from docx.oxml.ns import qn
 
 from services.pdf_to_word import (
     _clean_text,
@@ -78,6 +79,52 @@ class PdfToWordContentTests(unittest.TestCase):
         document = Document(io.BytesIO(output))
         text_paragraphs = [p.text for p in document.paragraphs if p.text]
         self.assertEqual(text_paragraphs, ["Dòng thứ nhất", "Dòng thứ hai"])
+
+    def test_two_column_academic_paper_preserves_full_width_header_and_two_column_body(self):
+        from services.pdf_to_word import _sort_blocks_reading_order
+        pw = 612.0
+        ph = 792.0
+        blocks = [
+            # Title 1 (centered, wide)
+            {"type": "paragraph", "bbox": [58.0, 53.0, 554.0, 70.0], "lines": [{"runs": [{"text": "Title Line 1"}]}]},
+            # Title 2 (centered, width ~ 360)
+            {"type": "paragraph", "bbox": [126.0, 73.0, 486.0, 91.0], "lines": [{"runs": [{"text": "Title Line 2"}]}]},
+            # Authors (centered, width ~ 358)
+            {"type": "paragraph", "bbox": [127.0, 101.0, 485.0, 138.0], "lines": [{"runs": [{"text": "Authors & Affiliation"}]}]},
+            # Left column: Abstract (x: 47 to 301, y: 150)
+            {"type": "paragraph", "bbox": [47.0, 150.0, 301.0, 400.0], "lines": [{"runs": [{"text": "Abstract paragraph"}]}]},
+            # Right column: text (x: 313 to 567, y: 150)
+            {"type": "paragraph", "bbox": [313.0, 150.0, 567.0, 400.0], "lines": [{"runs": [{"text": "Right column paragraph"}]}]},
+            # Right column: Figure 1 image (x: 317 to 560, y: 540)
+            {"type": "image", "bbox": [317.0, 540.0, 560.0, 667.0], "ext": "png", "image": b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\rIDATx\x9cc`\x00\x00\x00\x02\x00\x01H\xaf\xa4q\x00\x00\x00\x00IEND\xaeB`\x82"},
+        ]
+        sorted_blocks = _sort_blocks_reading_order(blocks, pw, ph)
+        
+        # Header blocks must be full-width
+        self.assertEqual(sorted_blocks[0]["column"], "full")
+        self.assertEqual(sorted_blocks[0]["lines"][0]["runs"][0]["text"], "Title Line 1")
+        self.assertEqual(sorted_blocks[1]["column"], "full")
+        self.assertEqual(sorted_blocks[1]["lines"][0]["runs"][0]["text"], "Title Line 2")
+        self.assertEqual(sorted_blocks[2]["column"], "full")
+        self.assertEqual(sorted_blocks[2]["lines"][0]["runs"][0]["text"], "Authors & Affiliation")
+
+        # Column 0 must be Abstract
+        self.assertEqual(sorted_blocks[3]["column"], 0)
+        self.assertEqual(sorted_blocks[3]["lines"][0]["runs"][0]["text"], "Abstract paragraph")
+
+        # Column 1 must be Right column text and Figure 1
+        self.assertEqual(sorted_blocks[4]["column"], 1)
+        self.assertEqual(sorted_blocks[4]["lines"][0]["runs"][0]["text"], "Right column paragraph")
+        self.assertEqual(sorted_blocks[5]["column"], 1)
+        self.assertEqual(sorted_blocks[5]["type"], "image")
+
+        # Test DOCX build produces 2 sections: 1-col header and 2-col body
+        docx_data = build_docx_from_blocks({"pages": [{"page_num": 1, "blocks": sorted_blocks}]})
+        doc = Document(io.BytesIO(docx_data))
+        self.assertEqual(len(doc.sections), 2)
+        cols_el = doc.sections[1]._sectPr.find(qn("w:cols"))
+        self.assertIsNotNone(cols_el)
+        self.assertEqual(cols_el.get(qn("w:num")), "2")
 
 
 if __name__ == "__main__":
