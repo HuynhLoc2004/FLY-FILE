@@ -734,9 +734,12 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                         cell = tbl.cell(r_i, c_i)
                         cell.text = val
                         for cp in cell.paragraphs:
+                            cp.paragraph_format.space_before = Pt(0)
+                            cp.paragraph_format.space_after  = Pt(0)
+                            cp.paragraph_format.line_spacing = 1.0
                             for cr in cp.runs:
                                 cr.font.name = "Times New Roman"
-                                cr.font.size = Pt(9.5)
+                                cr.font.size = Pt(8.0)
 
             elif block["type"] == "image":
                 img_bytes = block.get("image")
