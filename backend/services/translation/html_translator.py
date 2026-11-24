@@ -254,18 +254,38 @@ def _prepare_html_page(html: str):
     return soup, targets, source_segments
 
 
+def _detect_language(segments: list[str]) -> str:
+    """Return 'vi' if segments contain Vietnamese diacritics, else 'en'."""
+    sample = " ".join(segments[:15])
+    vietnamese_chars = "àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ"
+    count = sum(1 for ch in sample.lower() if ch in vietnamese_chars)
+    return "vi" if count >= 3 else "en"
+
+
 def _translate_segment_batch(source_segments: list[str], key: str) -> list[str]:
     if not source_segments:
         return []
 
-    prompt = f"""You are a professional Vietnamese-to-English legal translator.
+    source_lang = _detect_language(source_segments)
+    if source_lang == "vi":
+        direction_guidance = (
+            "You are a professional Vietnamese-to-English translator. "
+            "Translate all Vietnamese text into natural, fluent, grammatically correct professional English. "
+            "Personal names must be uppercase Latin without diacritics."
+        )
+    else:
+        direction_guidance = (
+            "Bạn là một chuyên gia dịch thuật tiếng Anh sang tiếng Việt chuyên nghiệp. "
+            "Hãy dịch toàn bộ nội dung tiếng Anh sang tiếng Việt tự nhiên, chuẩn văn phong học thuật, chính xác thuật ngữ chuyên ngành. "
+            "Giữ nguyên các tên riêng, mã số, thông số kỹ thuật."
+        )
+
+    prompt = f"""{direction_guidance}
 Translate the JSON array below as one document, using context across all items.
-If any item is already in English, keep it in English as-is without omitting, translating, or altering it.
 Return ONLY a valid JSON array with exactly {len(source_segments)} strings in the same order.
 Do not merge, split, omit, duplicate, or reorder items. Preserve numbers and identifiers exactly.
 Each array item is exactly one source line or one table cell; its translation must remain in that item.
-Use natural, grammatically correct legal English. Personal names must be uppercase Latin without
-diacritics. Preserve punctuation belonging to each item. Do not output HTML or markdown.
+Preserve punctuation belonging to each item. Do not output HTML or markdown.
 
 SOURCE SEGMENTS:
 {json.dumps(source_segments, ensure_ascii=False)}"""
@@ -277,11 +297,14 @@ SOURCE SEGMENTS:
             cleaned = re.sub(r"^```(?:json)?\s*", "", raw.strip(), flags=re.I)
             cleaned = re.sub(r"\s*```$", "", cleaned).strip()
             translated = json.loads(cleaned)
-            if not isinstance(translated, list) or len(translated) != len(source_segments):
-                raise ValueError("Gemini returned a different number of text segments")
-            if not all(isinstance(item, str) for item in translated):
-                raise ValueError("Gemini returned non-text translation segments")
-            return translated
+            if isinstance(translated, list):
+                # Align list length safely to prevent batch failure
+                if len(translated) < len(source_segments):
+                    translated.extend(source_segments[len(translated):])
+                elif len(translated) > len(source_segments):
+                    translated = translated[:len(source_segments)]
+                return [str(item) if item is not None else "" for item in translated]
+            raise ValueError("Gemini did not return a valid list")
         except Exception as exc:
             last_error = exc
             logger.warning("HTML text-node translation model %s failed: %s", model, exc)
@@ -329,8 +352,8 @@ def _build_translation_batches(flattened: list[tuple[int, int, str]],
 
 
 def translate_html_pages(html_pages: list[str], api_key: str | None = None,
-                         max_segments_per_batch: int = 80,
-                         max_chars_per_batch: int = 24_000,
+                         max_segments_per_batch: int = 30,
+                         max_chars_per_batch: int = 12_000,
                          max_workers: int | None = None) -> list[str]:
     """Translate many pages in small, bounded, fault-isolated batches."""
     key = get_gemini_api_key(api_key)

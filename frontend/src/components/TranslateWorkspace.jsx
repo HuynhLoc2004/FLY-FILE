@@ -806,7 +806,7 @@ const TranslateWorkspace = () => {
         {/* LEFT: original pages — independent scroll */}
         <div className="translate-panel-col translate-panel-col-left" ref={containerRef}>
           <div className="translate-col-header">
-            <FileText size={14} /> Bản gốc (Tiếng Việt)
+            <FileText size={14} /> Bản gốc
           </div>
           <div className="translate-col-scroll">
             <Document file={objectUrl} onLoadSuccess={({ numPages }) => setPdfNumPages(numPages)}>
@@ -829,7 +829,7 @@ const TranslateWorkspace = () => {
         {/* RIGHT: grouped translations — independent scroll */}
         <div className="translate-panel-col translate-panel-col-right">
           <div className="translate-col-header">
-            <Languages size={14} /> Bản dịch (English)
+            <Languages size={14} /> Bản dịch
           </div>
           <div className="translate-col-scroll">
             {(result.pages || [])

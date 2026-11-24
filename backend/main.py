@@ -253,11 +253,15 @@ async def api_translate_pdf_html(
                 except TranslationProviderError as page_error:
                     logger.warning("Vision translation failed on page %s: %s", p["page_num"], page_error)
                     failed_pages.append(p["page_num"])
+                    source_html = p.get("html", "")
                     translated_html = (
-                        '<div class="translation-page-warning" style="padding:24px;color:#9b2c2c;'
-                        'font-family:Arial,sans-serif;text-align:center">'
-                        f'Không thể dịch trang {p["page_num"]}. Vui lòng thử lại trang này sau.'
+                        '<div class="translation-page-warning" style="margin-bottom:12px;padding:8px 14px;'
+                        'border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;'
+                        'font-family:Arial,sans-serif;font-size:12px;line-height:1.4;text-align:center">'
+                        f'Không thể dịch trang {p["page_num"]} tự động qua Gemini. '
+                        'Bố cục gốc được giữ nguyên đầy đủ để bạn có thể xem và chỉnh sửa trực tiếp.'
                         '</div>'
+                        + source_html
                     )
 
             assets = p.get("preserved_assets", [])
