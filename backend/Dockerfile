@@ -4,7 +4,7 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000
 
-# Install system dependencies required for WeasyPrint, PyMuPDF, Pillow, etc.
+# Install system dependencies required for WeasyPrint, PyMuPDF, Pillow, LibreOffice, fonts, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpango-1.0-0 \
@@ -13,6 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     shared-mime-info \
     curl \
+    libreoffice-writer \
+    fonts-noto \
+    fonts-dejavu \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -631,6 +631,37 @@ def convert_pdf_bytes_to_docx_bytes(pdf_bytes: bytes) -> bytes:
         raise ValueError("File PDF trống.")
     if not pdf_bytes.lstrip().startswith(b"%PDF-"):
         raise ValueError("File tải lên không phải là PDF hợp lệ.")
+
+    # High-fidelity layout preservation with pdf2docx
+    # Accurately reconstructs multi-column text, tables, fonts, and images
+    try:
+        import tempfile
+        from pdf2docx import Converter
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as in_f:
+            in_f.write(pdf_bytes)
+            in_path = in_f.name
+        out_path = in_path.replace(".pdf", ".docx")
+
+        try:
+            cv = Converter(in_path)
+            cv.convert(out_path)
+            cv.close()
+            if os.path.exists(out_path):
+                with open(out_path, "rb") as out_f:
+                    data = out_f.read()
+                if data:
+                    return data
+        finally:
+            for p in (in_path, out_path):
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+    except Exception as exc:
+        logger.warning("pdf2docx conversion failed: %s; falling back to internal block parser", exc)
+
     try:
         return build_docx_from_blocks(parse_pdf_to_blocks(pdf_bytes))
     except ValueError:

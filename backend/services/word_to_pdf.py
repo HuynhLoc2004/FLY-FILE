@@ -1,7 +1,11 @@
-"""Word to PDF conversion with embedded Unicode fonts and wide-table support."""
+"""Word to PDF conversion with embedded Unicode fonts, multi-column preservation, and wide-table support."""
 
 import io
+import logging
 import os
+import re
+import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -12,7 +16,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 from xhtml2pdf import pisa
 from xhtml2pdf import default as pisa_default
 
-
+logger = logging.getLogger(__name__)
 _FONT_LOCK = threading.Lock()
 
 
@@ -23,7 +27,6 @@ def _unicode_font_path() -> Path | None:
         Path(configured) if configured else None,
         Path(__file__).resolve().parent.parent / "assets" / "fonts" / "NotoSans-Regular.ttf",
         Path(r"C:\Windows\Fonts\arial.ttf"),
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
         Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
         Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
@@ -65,6 +68,111 @@ def _register_unicode_font() -> bool:
     return True
 
 
+def _convert_via_libreoffice(word_bytes: bytes) -> bytes | None:
+    """High-fidelity Word to PDF conversion via headless LibreOffice (Docker/Linux)."""
+    lo_bin = (
+        shutil.which("libreoffice")
+        or shutil.which("soffice")
+        or (Path(r"C:\Program Files\LibreOffice\program\soffice.exe") if os.name == "nt" and Path(r"C:\Program Files\LibreOffice\program\soffice.exe").is_file() else None)
+    )
+    if not lo_bin:
+        return None
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir)
+        doc_path = tmp_path / "document.docx"
+        user_dir = tmp_path / "lo_profile"
+        user_dir.mkdir(parents=True, exist_ok=True)
+        doc_path.write_bytes(word_bytes)
+
+        cmd = [
+            str(lo_bin),
+            "--headless",
+            "--invisible",
+            "--nodefault",
+            "--nofirststartwizard",
+            f"-env:UserInstallation=file://{user_dir.as_posix()}",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(tmp_path),
+            str(doc_path),
+        ]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+            pdf_path = tmp_path / "document.pdf"
+            if pdf_path.is_file():
+                return pdf_path.read_bytes()
+            logger.warning("LibreOffice failed (code %s): %s", res.returncode, res.stderr.decode("utf-8", errors="ignore"))
+        except Exception as exc:
+            logger.warning("LibreOffice execution error: %s", exc)
+    return None
+
+
+def _docx_to_html_enhanced(word_bytes: bytes) -> str:
+    """Preprocess docx to preserve section columns and alignments before Mammoth conversion."""
+    try:
+        from docx import Document
+        doc = Document(io.BytesIO(word_bytes))
+
+        # Check initial section columns
+        initial_cols = 1
+        if doc.sections:
+            cols_el = doc.sections[0]._sectPr.xpath('.//w:cols/@w:num')
+            if cols_el:
+                try:
+                    initial_cols = int(cols_el[0])
+                except (ValueError, TypeError):
+                    initial_cols = 1
+
+        sect_idx = 0
+        for p in list(doc.paragraphs):
+            # Check paragraph alignment
+            val_list = p._element.xpath('./w:pPr/w:jc/@w:val')
+            if val_list and p.runs:
+                align_val = val_list[0]
+                if align_val in ("center", "right", "both", "distribute"):
+                    p.runs[0].text = f"[[[FLY_ALIGN:{align_val}]]]" + p.runs[0].text
+
+            # Check section break
+            if p._element.xpath('./w:pPr/w:sectPr'):
+                sect_idx += 1
+                cols_val = 1
+                if sect_idx < len(doc.sections):
+                    c = doc.sections[sect_idx]._sectPr.xpath('.//w:cols/@w:num')
+                    if c:
+                        try:
+                            cols_val = int(c[0])
+                        except (ValueError, TypeError):
+                            cols_val = 1
+                marker = doc.add_paragraph(f"[[[FLY_SECTION_BREAK:{cols_val}]]]")
+                p._element.addnext(marker._element)
+
+        modified_docx = io.BytesIO()
+        doc.save(modified_docx)
+        modified_docx.seek(0)
+        res = mammoth.convert_to_html(modified_docx)
+        raw_html = res.value
+    except Exception as exc:
+        logger.warning("Enhanced docx analysis error: %s; falling back to direct mammoth", exc)
+        raw_html = mammoth.convert_to_html(io.BytesIO(word_bytes)).value
+        initial_cols = 1
+
+    # Replace markers
+    body_html = re.sub(
+        r'<p>\[\[\[FLY_ALIGN:(\w+)\]\]\]',
+        r'<p class="align-\1">',
+        raw_html
+    )
+    body_html = re.sub(
+        r'<p>\[\[\[FLY_SECTION_BREAK:(\d+)\]\]\]</p>',
+        r'</div><div class="docx-section cols-\1">',
+        body_html
+    )
+    return f'<div class="docx-section cols-{initial_cols}">{body_html}</div>'
+
+
 def _html_document(body_html: str) -> str:
     max_columns = _maximum_table_columns(body_html)
     is_wide = max_columns >= 8
@@ -88,6 +196,13 @@ def _html_document(body_html: str) -> str:
           'overflow-wrap:anywhere;word-break:break-word;hyphens:auto;}'
         + 'tr{page-break-inside:avoid;}img{max-width:100%;height:auto;}'
         + 'ul,ol{margin:0 0 7pt 18pt;padding:0;}li{margin-bottom:2pt;}'
+        + '.align-center{text-align:center;}'
+        + '.align-right{text-align:right;}'
+        + '.align-both,.align-distribute{text-align:justify;}'
+        + '.docx-section{width:100%;margin-bottom:12pt;}'
+        + '.docx-section.cols-2{column-count:2;-webkit-column-count:2;column-gap:18pt;text-align:justify;}'
+        + '.docx-section.cols-3{column-count:3;-webkit-column-count:3;column-gap:14pt;text-align:justify;}'
+        + '.column-span-all,.docx-section h1,.docx-section table{column-span:all;-webkit-column-span:all;}'
     )
     return (
         '<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8">'
@@ -98,15 +213,22 @@ def _html_document(body_html: str) -> str:
 def convert_word_bytes_to_pdf_bytes(word_bytes: bytes) -> bytes:
     if not word_bytes:
         raise ValueError("File Word trống.")
-    result = mammoth.convert_to_html(io.BytesIO(word_bytes))
-    document_html = _html_document(result.value)
+
+    # 1. First: Try native headless LibreOffice conversion
+    lo_result = _convert_via_libreoffice(word_bytes)
+    if lo_result:
+        return lo_result
+
+    # 2. Enhanced HTML-based conversion preserving sections, columns, and alignments
+    body_html = _docx_to_html_enhanced(word_bytes)
+    document_html = _html_document(body_html)
 
     # Try WeasyPrint first when available (Linux / Render)
     try:
         from weasyprint import HTML as WeasyHTML
         return WeasyHTML(string=document_html).write_pdf()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("WeasyPrint conversion failed: %s; falling back to xhtml2pdf", e)
 
     if not _register_unicode_font():
         raise RuntimeError(
