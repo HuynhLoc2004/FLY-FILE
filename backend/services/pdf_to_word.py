@@ -188,7 +188,7 @@ def _detect_align(x0, x1, page_width):
     sym = abs(x0 - (page_width - x1))
     if x0 > mid * 1.1 and block_w < page_width * 0.45:
         return "right"
-    if sym < page_width * 0.06 and block_w < page_width * 0.75:
+    if sym < page_width * 0.08:
         return "center"
     return "left"
 

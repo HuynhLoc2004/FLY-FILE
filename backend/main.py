@@ -44,6 +44,16 @@ async def root():
 async def health_check():
     return {"status": "ok"}
 
+@app.get("/api/build-info")
+async def build_info():
+    return {
+        "status": "ok",
+        "service": "Fly FILE API",
+        "version": "v2.5.0",
+        "deployment": "production",
+        "features": ["two-column-reading-order", "full-width-header", "image-preservation", "bidirectional-translation"]
+    }
+
 # CORS configuration
 # When allow_credentials=True, browsers reject wildcard "*" origins.
 # Using allow_origin_regex allows any HTTP/HTTPS origin (localhost, Vercel preview/production domains)
