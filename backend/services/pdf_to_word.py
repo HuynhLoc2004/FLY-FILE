@@ -15,6 +15,9 @@ import fitz  # PyMuPDF
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.section import WD_SECTION
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 logger = logging.getLogger(__name__)
 GLOBAL_OCR_ENGINE = None
@@ -487,38 +490,148 @@ def parse_pdf_to_blocks(pdf_bytes: bytes) -> dict:
                 })
 
         all_blocks = paragraphs + extracted_tables
-        all_blocks.sort(key=lambda b: b["bbox"][1])
+        all_blocks = _sort_blocks_reading_order(all_blocks, page_width, page.rect.height)
+        all_blocks = _merge_drop_caps(all_blocks)
         pages_data.append({"page_num": page_index + 1, "blocks": all_blocks})
 
     pdf_doc.close()
     return {"pages": pages_data}
 
 
+def _sort_blocks_reading_order(blocks: list[dict], page_width: float, page_height: float) -> list[dict]:
+    """Sort page blocks in natural human reading order:
+    1. Full-width header blocks (Title, authors, top banners)
+    2. Column 1 (Left) blocks top-to-bottom
+    3. Column 2 (Right) blocks top-to-bottom
+    4. Full-width footer blocks (footnotes, page numbers)
+    """
+    if not blocks:
+        return []
+
+    col_mid = page_width / 2.0
+    col_blocks = [b for b in blocks if (b["bbox"][2] - b["bbox"][0]) < 0.62 * page_width]
+    has_left = any(b["bbox"][2] <= col_mid + 25 for b in col_blocks)
+    has_right = any(b["bbox"][0] >= col_mid - 25 for b in col_blocks)
+
+    if not (has_left and has_right and len(col_blocks) >= 2):
+        for b in blocks:
+            b["column"] = "full"
+        return sorted(blocks, key=lambda b: (b["bbox"][1], b["bbox"][0]))
+
+    first_col_y = min(b["bbox"][1] for b in col_blocks)
+    last_col_y = max(b["bbox"][3] for b in col_blocks)
+
+    header, footer, left_col, right_col, spanning_mid = [], [], [], [], []
+
+    for b in blocks:
+        bbox = b["bbox"]
+        w = bbox[2] - bbox[0]
+        cx = (bbox[0] + bbox[2]) / 2.0
+        if bbox[3] <= first_col_y + 8 or (w >= 0.62 * page_width and bbox[1] < first_col_y + 15):
+            b["column"] = "full"
+            header.append(b)
+        elif bbox[1] >= last_col_y - 8 and w >= 0.62 * page_width:
+            b["column"] = "full"
+            footer.append(b)
+        elif w >= 0.62 * page_width:
+            b["column"] = "full"
+            spanning_mid.append(b)
+        elif cx < col_mid:
+            b["column"] = 0
+            left_col.append(b)
+        else:
+            b["column"] = 1
+            right_col.append(b)
+
+    header.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    footer.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    left_col.sort(key=lambda b: b["bbox"][1])
+    right_col.sort(key=lambda b: b["bbox"][1])
+    spanning_mid.sort(key=lambda b: b["bbox"][1])
+
+    if spanning_mid:
+        result = list(header)
+        for span_b in spanning_mid:
+            span_y = span_b["bbox"][1]
+            lb = [b for b in left_col if b["bbox"][3] <= span_y]
+            rb = [b for b in right_col if b["bbox"][3] <= span_y]
+            left_col = [b for b in left_col if b not in lb]
+            right_col = [b for b in right_col if b not in rb]
+            result.extend(lb)
+            result.extend(rb)
+            result.append(span_b)
+        result.extend(left_col)
+        result.extend(right_col)
+        result.extend(footer)
+        return result
+
+    return header + left_col + right_col + footer
+
+
+def _merge_drop_caps(blocks: list[dict]) -> list[dict]:
+    """Merge standalone drop-cap letters into the following paragraph."""
+    merged = []
+    i = 0
+    while i < len(blocks):
+        b = blocks[i]
+        if b.get("type") == "paragraph" and i + 1 < len(blocks):
+            next_b = blocks[i + 1]
+            if next_b.get("type") == "paragraph":
+                lines = b.get("lines") or []
+                if len(lines) == 1:
+                    runs = lines[0].get("runs") or []
+                    all_text = "".join(r.get("text", "") for r in runs).strip()
+                    if len(all_text) == 1 and all_text.isupper():
+                        next_lines = next_b.get("lines") or []
+                        if next_lines:
+                            next_runs = next_lines[0].get("runs") or []
+                            if next_runs:
+                                drop_run = dict(runs[0])
+                                drop_run["bold"] = True
+                                drop_run["size"] = next_runs[0].get("size", 11.0)
+                                next_lines[0]["runs"] = [drop_run] + next_runs
+                                i += 1
+                                continue
+        merged.append(b)
+        i += 1
+    return merged
+
+
 # ── DOCX builder ──────────────────────────────────────────────────────────────
+
+def _set_section_cols(section, num_cols: int, space_twips: int = 540):
+    cols_el = section._sectPr.find(qn("w:cols"))
+    if cols_el is None:
+        cols_el = OxmlElement("w:cols")
+        section._sectPr.append(cols_el)
+    cols_el.set(qn("w:num"), str(num_cols))
+    cols_el.set(qn("w:space"), str(space_twips))
+
 
 def build_docx_from_blocks(blocks_data: dict) -> bytes:
     doc = Document()
 
     for section in doc.sections:
-        section.top_margin    = Inches(1.0)
-        section.bottom_margin = Inches(1.0)
-        section.left_margin   = Inches(1.18)
-        section.right_margin  = Inches(1.18)
+        section.top_margin    = Inches(0.75)
+        section.bottom_margin = Inches(0.75)
+        section.left_margin   = Inches(0.75)
+        section.right_margin  = Inches(0.75)
 
     normal = doc.styles["Normal"]
     normal.font.name = "Times New Roman"
-    normal.font.size = Pt(13)
-    normal.paragraph_format.space_after  = Pt(4)
+    normal.font.size = Pt(11)
+    normal.paragraph_format.space_after  = Pt(3.5)
     normal.paragraph_format.space_before = Pt(0)
     normal.paragraph_format.line_spacing = 1.15
 
     def _add_para(block):
         align_str  = block.get("align", "left")
-        dom_size   = block.get("font_size", 13.0) or 13.0
+        dom_size   = block.get("font_size", 11.0) or 11.0
         lines      = block.get("lines", [])
         is_heading = block.get("is_heading", False)
         blk_bold   = block.get("is_bold", False)
         bbox       = block.get("bbox", [0, 0, 0, 0])
+        col        = block.get("column", "full")
 
         p = doc.add_paragraph()
         if align_str == "center":
@@ -528,9 +641,10 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
         else:
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             x0 = bbox[0]
-            if x0 > 95:
+            # Only apply left indent to intentionally indented single-column blocks, never to column 1 or column 2
+            if col == "full" and x0 > 110:
                 p.paragraph_format.left_indent = Inches(
-                    min(2.5, max(0.0, (x0 - 72) / 72.0))
+                    min(2.0, max(0.0, (x0 - 72) / 72.0))
                 )
 
         # Gộp các dòng trong cùng block bằng SPACE, không dùng \n cứng.
@@ -573,10 +687,22 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 b = int(color_hex[5:7], 16)
                 run.font.color.rgb = RGBColor(r, g, b)
 
+    current_cols = 1
     for p_idx, page in enumerate(blocks_data.get("pages", [])):
         if p_idx:
             doc.add_page_break()
         for block in page.get("blocks", []):
+            blk_col = block.get("column", "full")
+            needed_cols = 2 if blk_col in (0, 1) else 1
+            if needed_cols != current_cols:
+                sec = doc.add_section(WD_SECTION.CONTINUOUS)
+                sec.top_margin    = Inches(0.75)
+                sec.bottom_margin = Inches(0.75)
+                sec.left_margin   = Inches(0.75)
+                sec.right_margin  = Inches(0.75)
+                _set_section_cols(sec, needed_cols)
+                current_cols = needed_cols
+
             if block["type"] == "table":
                 cells = block.get("cells", [])
                 if not cells:
@@ -632,36 +758,49 @@ def convert_pdf_bytes_to_docx_bytes(pdf_bytes: bytes) -> bytes:
     if not pdf_bytes.lstrip().startswith(b"%PDF-"):
         raise ValueError("File tải lên không phải là PDF hợp lệ.")
 
-    # High-fidelity layout preservation with pdf2docx
-    # Accurately reconstructs multi-column text, tables, fonts, and images
+    # 1. For small documents (<= 2 pages), attempt pdf2docx with a 15-second timeout
     try:
-        import tempfile
-        from pdf2docx import Converter
+        pdf_doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page_count = len(pdf_doc)
+        pdf_doc.close()
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as in_f:
-            in_f.write(pdf_bytes)
-            in_path = in_f.name
-        out_path = in_path.replace(".pdf", ".docx")
+        if page_count <= 2:
+            import concurrent.futures
+            import tempfile
+            from pdf2docx import Converter
 
-        try:
-            cv = Converter(in_path)
-            cv.convert(out_path)
-            cv.close()
-            if os.path.exists(out_path):
-                with open(out_path, "rb") as out_f:
-                    data = out_f.read()
-                if data:
-                    return data
-        finally:
-            for p in (in_path, out_path):
-                if os.path.exists(p):
-                    try:
-                        os.remove(p)
-                    except Exception:
-                        pass
+            def _run_pdf2docx(in_p, out_p):
+                cv = Converter(in_p)
+                cv.convert(out_p)
+                cv.close()
+
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as in_f:
+                in_f.write(pdf_bytes)
+                in_path = in_f.name
+            out_path = in_path.replace(".pdf", ".docx")
+
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(_run_pdf2docx, in_path, out_path)
+                    future.result(timeout=15)
+                if os.path.exists(out_path):
+                    with open(out_path, "rb") as out_f:
+                        data = out_f.read()
+                    if data:
+                        return data
+            except Exception as exc:
+                logger.info("pdf2docx skipped (%s); using native layout parser", exc)
+            finally:
+                for p in (in_path, out_path):
+                    if os.path.exists(p):
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
     except Exception as exc:
-        logger.warning("pdf2docx conversion failed: %s; falling back to internal block parser", exc)
+        logger.info("pdf2docx init error: %s", exc)
 
+    # 2. Fast, robust native parser with column detection, reading-order flow & continuous 2-column sections
     try:
         return build_docx_from_blocks(parse_pdf_to_blocks(pdf_bytes))
     except ValueError:

@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     shared-mime-info \
     curl \
     libreoffice-writer \
+    libgl1 \
+    libglib2.0-0 \
     fonts-noto \
     fonts-dejavu \
     fonts-liberation \

@@ -18,3 +18,4 @@ mammoth
 weasyprint
 pytesseract
 pdf2docx
+opencv-python-headless
