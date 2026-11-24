@@ -611,7 +611,7 @@ def _merge_drop_caps(blocks: list[dict]) -> list[dict]:
 
 # ── DOCX builder ──────────────────────────────────────────────────────────────
 
-def _set_section_cols(section, num_cols: int, space_twips: int = 240):
+def _set_section_cols(section, num_cols: int, space_twips: int = 288):
     cols_el = section._sectPr.find(qn("w:cols"))
     if cols_el is None:
         cols_el = OxmlElement("w:cols")
@@ -632,92 +632,42 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
     normal = doc.styles["Normal"]
     normal.font.name = "Times New Roman"
     normal.font.size = Pt(9.5)
-    normal.paragraph_format.space_after  = Pt(1.5)
+    normal.paragraph_format.space_after  = Pt(0)
     normal.paragraph_format.space_before = Pt(0)
     normal.paragraph_format.line_spacing = 1.05
 
-    def _add_para(block):
-        align_str  = block.get("align", "left")
-        dom_size   = block.get("font_size", 9.5) or 9.5
-        lines      = block.get("lines", [])
-        is_heading = block.get("is_heading", False)
-        blk_bold   = block.get("is_bold", False)
-        bbox       = block.get("bbox", [0, 0, 0, 0])
-        col        = block.get("column", "full")
-
-        p = doc.add_paragraph()
-        if align_str == "center":
-            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        elif align_str == "right":
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        else:
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            x0 = bbox[0]
-            # Only apply left indent to intentionally indented single-column blocks, never to column 1 or column 2
-            if col == "full" and x0 > 110:
-                p.paragraph_format.left_indent = Inches(
-                    min(2.0, max(0.0, (x0 - 72) / 72.0))
-                )
-
-        p.paragraph_format.space_after  = Pt(1.5)
-        p.paragraph_format.line_spacing = 1.05
-
-        # Gộp các dòng trong cùng block bằng SPACE, không dùng \n cứng.
-        # PDF soft-wrap theo cột → Word tự reflow theo lề trang.
-        all_runs = []
-        for l_idx, ln in enumerate(lines):
-            for r_idx, rdata in enumerate(ln.get("runs", [])):
-                txt = _clean_text(rdata.get("text", ""))
-                if not txt:
-                    continue
-
-                # Đảm bảo có space giữa các dòng (không phải giữa các span cùng dòng)
-                if r_idx == 0 and l_idx > 0:
-                    # Đây là run đầu của dòng mới — thêm space nối với dòng trước
-                    if all_runs and not all_runs[-1]["text"].endswith(" "):
-                        all_runs[-1]["text"] += " "
-
-                all_runs.append({
-                    "text": txt,
-                    "bold": rdata.get("bold", False) or (is_heading and blk_bold),
-                    "italic": rdata.get("italic", False),
-                    "size": rdata.get("size") or dom_size,
-                    "color": rdata.get("color"),
-                })
-
-        for rdata in all_runs:
-            txt = rdata["text"]
-            if not txt:
-                continue
-            run = p.add_run(txt)
-            run.font.name = "Times New Roman"
-            run.font.size = Pt(round(rdata["size"], 1))
-            run.bold   = rdata["bold"]
-            run.italic = rdata["italic"]
-            color_hex = rdata.get("color")
-            if color_hex:
-                r = int(color_hex[1:3], 16)
-                g = int(color_hex[3:5], 16)
-                b = int(color_hex[5:7], 16)
-                run.font.color.rgb = RGBColor(r, g, b)
+    # Check if this document has multi-column sections (e.g. 2-column academic paper)
+    has_multi_column = any(
+        b.get("column") in (0, 1)
+        for page in blocks_data.get("pages", [])
+        for b in page.get("blocks", [])
+    )
 
     current_cols = 1
+    _set_section_cols(doc.sections[0], 1)
+
     for p_idx, page in enumerate(blocks_data.get("pages", [])):
-        if p_idx:
+        # For single-column documents, preserve page breaks.
+        # For multi-column documents, let Word naturally reflow columns across pages
+        # without hard page breaks that break column balance and create blank pages.
+        if p_idx > 0 and not has_multi_column:
             doc.add_page_break()
+
         for block in page.get("blocks", []):
             blk_col = block.get("column", "full")
             needed_cols = 2 if blk_col in (0, 1) else 1
+
             if needed_cols != current_cols:
                 sec = doc.add_section(WD_SECTION.CONTINUOUS)
                 sec.top_margin    = Inches(0.7)
                 sec.bottom_margin = Inches(0.7)
                 sec.left_margin   = Inches(0.65)
                 sec.right_margin  = Inches(0.65)
-                _set_section_cols(sec, needed_cols, 240)
+                _set_section_cols(sec, needed_cols, 288)
                 current_cols = needed_cols
 
-            if block["type"] == "table":
+            btype = block.get("type")
+            if btype == "table":
                 cells = block.get("cells", [])
                 if not cells:
                     continue
@@ -741,7 +691,7 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                                 cr.font.name = "Times New Roman"
                                 cr.font.size = Pt(8.0)
 
-            elif block["type"] == "image":
+            elif btype == "image":
                 img_bytes = block.get("image")
                 if not img_bytes:
                     continue
@@ -750,8 +700,10 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 p.alignment = (WD_ALIGN_PARAGRAPH.CENTER if align_str == "center"
                                else WD_ALIGN_PARAGRAPH.RIGHT if align_str == "right"
                                else WD_ALIGN_PARAGRAPH.LEFT)
+                p.paragraph_format.space_before = Pt(3)
+                p.paragraph_format.space_after  = Pt(2)
                 pdf_width = block["bbox"][2] - block["bbox"][0]
-                max_w = 3.4 if blk_col in (0, 1) else 6.8
+                max_w = 3.38 if blk_col in (0, 1) else 6.8
                 docx_width = Inches(min(max_w, max(0.6, pdf_width / 72.0)))
                 run = p.add_run()
                 try:
@@ -759,8 +711,204 @@ def build_docx_from_blocks(blocks_data: dict) -> bytes:
                 except Exception:
                     run.text = f"[Hình ảnh: lỗi định dạng .{block.get('ext', 'img')}]"
 
-            else:
-                _add_para(block)
+            else:  # paragraph
+                lines = block.get("lines", [])
+                raw_text = " ".join("".join(r["text"] for r in ln.get("runs", [])) for ln in lines).strip()
+                if not raw_text:
+                    continue
+
+                align_str  = block.get("align", "left")
+                dom_size   = block.get("font_size", 9.5) or 9.5
+                is_heading = block.get("is_heading", False)
+                bbox       = block.get("bbox", [0, 0, 0, 0])
+
+                # Check classifications
+                is_title = (dom_size >= 14.0 or (align_str == "center" and current_cols == 1 and dom_size >= 13.0)) and not ("@" in raw_text or "Faculty" in raw_text)
+                is_abstract = raw_text.startswith("Abstract—") or raw_text.startswith("Abstract-") or raw_text.startswith("Abstract ")
+                is_keywords = raw_text.startswith("Keywords—") or raw_text.startswith("Keywords-") or raw_text.startswith("Keywords ")
+                is_fig_caption = raw_text.startswith("Fig.") or raw_text.startswith("Figure ")
+                is_table_caption = raw_text.startswith("TABLE ") or raw_text.startswith("Table ")
+                is_roman_heading = bool(re.match(r'^(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+[A-Z\s]+$', raw_text.strip()))
+                is_alpha_heading = bool(re.match(r'^[A-Z]\.\s+[A-Za-z\s]+$', raw_text.strip()))
+                is_list_item = bool(re.match(r'^\d+\)\s+', raw_text.strip()))
+
+                # Split authors/affiliations in full-width header
+                if current_cols == 1 and not is_title and ("student.iuh.edu.vn" in raw_text or "Faculty of" in raw_text or "@" in raw_text):
+                    for ln in lines:
+                        ln_text = " ".join(r["text"] for r in ln.get("runs", [])).strip()
+                        if not ln_text:
+                            continue
+                        p = doc.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        if "@" in ln_text:
+                            p.paragraph_format.space_before = Pt(0)
+                            p.paragraph_format.space_after  = Pt(11)
+                            run = p.add_run(ln_text)
+                            run.font.name = "Times New Roman"
+                            run.font.size = Pt(9.5)
+                            run.italic = True
+                        elif "Faculty" in ln_text or "University" in ln_text or "Department" in ln_text:
+                            p.paragraph_format.space_before = Pt(0)
+                            p.paragraph_format.space_after  = Pt(1.5)
+                            run = p.add_run(ln_text)
+                            run.font.name = "Times New Roman"
+                            run.font.size = Pt(9.5)
+                            run.italic = True
+                        else:  # Author names
+                            p.paragraph_format.space_before = Pt(0)
+                            p.paragraph_format.space_after  = Pt(2)
+                            run = p.add_run(ln_text)
+                            run.font.name = "Times New Roman"
+                            run.font.size = Pt(10.5)
+                    continue
+
+                # If a figure caption has a list item or body paragraph merged into it, split them
+                sub_paragraphs = [raw_text]
+                if is_fig_caption and (" 1) " in raw_text or "\n1) " in raw_text):
+                    split_idx = raw_text.find(" 1) ")
+                    if split_idx == -1:
+                        split_idx = raw_text.find("\n1) ")
+                    if split_idx != -1:
+                        sub_paragraphs = [raw_text[:split_idx].strip(), raw_text[split_idx:].strip()]
+
+                for sub_idx, sub_text in enumerate(sub_paragraphs):
+                    p = doc.add_paragraph()
+
+                    if is_title:
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p.paragraph_format.space_before = Pt(2)
+                        p.paragraph_format.space_after  = Pt(6)
+                        run = p.add_run(sub_text)
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(16.0)
+                        run.bold = True
+                        continue
+
+                    if is_roman_heading:
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p.paragraph_format.space_before = Pt(10)
+                        p.paragraph_format.space_after  = Pt(4)
+                        p.paragraph_format.keep_with_next = True
+                        run = p.add_run(sub_text)
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(10.0)
+                        run.bold = True
+                        continue
+
+                    if is_alpha_heading:
+                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                        p.paragraph_format.space_before = Pt(6)
+                        p.paragraph_format.space_after  = Pt(2)
+                        p.paragraph_format.keep_with_next = True
+                        run = p.add_run(sub_text)
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(9.5)
+                        run.italic = True
+                        run.bold = True
+                        continue
+
+                    if sub_idx == 0 and (is_fig_caption or is_table_caption):
+                        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                        p.paragraph_format.space_before = Pt(1)
+                        p.paragraph_format.space_after  = Pt(4)
+                        run = p.add_run(sub_text)
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(8.0)
+                        run.italic = True
+                        continue
+
+                    if is_abstract or is_keywords:
+                        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                        p.paragraph_format.first_line_indent = Inches(0.14)
+                        p.paragraph_format.space_before = Pt(3)
+                        p.paragraph_format.space_after  = Pt(8 if is_keywords else 3)
+                        p.paragraph_format.line_spacing = 1.05
+
+                        prefix = "Abstract—" if is_abstract else "Keywords—"
+                        if not sub_text.startswith(prefix):
+                            prefix = "Abstract-" if is_abstract else "Keywords-"
+                        body_txt = sub_text[len(prefix):].strip()
+                        r_pre = p.add_run(prefix)
+                        r_pre.font.name = "Times New Roman"
+                        r_pre.font.size = Pt(9.0)
+                        r_pre.bold = True
+                        r_pre.italic = True
+
+                        r_body = p.add_run(" " + body_txt)
+                        r_body.font.name = "Times New Roman"
+                        r_body.font.size = Pt(9.0)
+                        r_body.bold = True
+                        continue
+
+                    sub_is_list = bool(re.match(r'^\d+\)\s+', sub_text.strip()))
+                    if sub_is_list:
+                        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                        p.paragraph_format.left_indent = Inches(0.18)
+                        p.paragraph_format.first_line_indent = Inches(-0.18)
+                        p.paragraph_format.space_before = Pt(1.5)
+                        p.paragraph_format.space_after  = Pt(1.5)
+                        p.paragraph_format.line_spacing = 1.05
+                        run = p.add_run(sub_text)
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(9.5)
+                        continue
+
+                    # Standard body paragraph
+                    if current_cols == 2:
+                        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                    elif align_str == "center":
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    elif align_str == "right":
+                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    else:
+                        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                        x0 = bbox[0]
+                        if blk_col == "full" and x0 > 110:
+                            p.paragraph_format.left_indent = Inches(min(2.0, max(0.0, (x0 - 72) / 72.0)))
+
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after  = Pt(0)
+                    p.paragraph_format.line_spacing = 1.05
+
+                    if current_cols == 2 and not (sub_text.startswith("x'") or sub_text.startswith("E(S)") or sub_text.startswith("Lout") or sub_text.startswith("[")):
+                        p.paragraph_format.first_line_indent = Inches(0.14)
+
+                    # Build runs
+                    if len(sub_paragraphs) > 1:
+                        # For split paragraphs, use plain run
+                        run = p.add_run(sub_text)
+                        run.font.name = "Times New Roman"
+                        run.font.size = Pt(9.5)
+                    else:
+                        all_runs = []
+                        for l_idx, ln in enumerate(lines):
+                            for r_idx, rdata in enumerate(ln.get("runs", [])):
+                                txt = _clean_text(rdata.get("text", ""))
+                                if not txt:
+                                    continue
+                                if r_idx == 0 and l_idx > 0:
+                                    if all_runs and not all_runs[-1]["text"].endswith(" "):
+                                        all_runs[-1]["text"] += " "
+                                all_runs.append({
+                                    "text": txt,
+                                    "bold": rdata.get("bold", False),
+                                    "italic": rdata.get("italic", False),
+                                    "size": 9.5,
+                                    "color": rdata.get("color"),
+                                })
+
+                        for rdata in all_runs:
+                            run = p.add_run(rdata["text"])
+                            run.font.name = "Times New Roman"
+                            run.font.size = Pt(rdata["size"])
+                            run.bold   = rdata["bold"]
+                            run.italic = rdata["italic"]
+                            color_hex = rdata.get("color")
+                            if color_hex:
+                                r = int(color_hex[1:3], 16)
+                                g = int(color_hex[3:5], 16)
+                                b = int(color_hex[5:7], 16)
+                                run.font.color.rgb = RGBColor(r, g, b)
 
     out = io.BytesIO()
     doc.save(out)
